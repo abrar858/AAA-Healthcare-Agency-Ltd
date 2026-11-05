@@ -2,7 +2,7 @@
 const json = (body,status=200) => response(JSON.stringify(body),status,{'Content-Type':'application/json; charset=utf-8'});
 function response(body,status=200,headers={}) {
   return new Response(body,{status,headers:{
-    'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
+    'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin',
     'Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'",...headers
   }});
 }

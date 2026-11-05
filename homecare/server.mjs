@@ -216,7 +216,7 @@ function startServer() {
     const nonce = randomBytes(18).toString('base64');
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
-    res.setHeader('Referrer-Policy','no-referrer');
+    res.setHeader('Referrer-Policy','same-origin');
     res.setHeader('Content-Security-Policy',`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`);
     if(secure) res.setHeader('Strict-Transport-Security','max-age=31536000');
     try {

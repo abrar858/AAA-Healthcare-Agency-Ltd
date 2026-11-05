@@ -64,6 +64,8 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     await start();
     assert.equal((await request('/api/state')).status,401);
     assert.equal((await request('/')).headers.get('location'),'/login');
+    // Browsers send "Origin: null" on POSTs from a no-referrer page, which the origin check rejects.
+    assert.equal((await request('/login')).headers.get('referrer-policy'),'same-origin');
     const admin = await signIn('admin');
     const page = await request('/',{headers:{Cookie:admin}});
     assert.match(page.headers.get('content-security-policy'),/script-src 'nonce-/);
