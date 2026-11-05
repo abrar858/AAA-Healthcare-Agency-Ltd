@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { complianceView, permittedCatalog, recordCompliance } from './compliance.mjs';
 import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
+import * as calendar from './calendar.mjs';
 import * as diary from './diary.mjs';
 import { initialState, roles, applyAction, project, AppError, requireCondition } from './domain.mjs';
 
@@ -32,9 +33,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
 `);
 db.exec(readFileSync(new URL('./sites/drizzle/0003_aaa_diary.sql',import.meta.url),'utf8'));
+db.exec(readFileSync(new URL('./sites/drizzle/0004_aaa_calendar.sql',import.meta.url),'utf8'));
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
-const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor)});
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -127,7 +129,7 @@ function startServer() {
   function userOf(req) {
     const token = tokenOf(req);
     if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
-    return db.prepare('SELECT users.* FROM sessions JOIN users USING(email) WHERE token_hash=? AND expires>? AND enabled=1').get(hash(token),Date.now());
+    return db.prepare("SELECT users.* FROM sessions JOIN users USING(email) WHERE token_hash=? AND expires>? AND enabled=1 AND role<>'carer'").get(hash(token),Date.now());
   }
   function write(res,status,body,type='text/html; charset=utf-8') {
     res.writeHead(status,{'Content-Type':type});
@@ -191,7 +193,7 @@ function startServer() {
         rateLimit(req);
         const fields = new URLSearchParams(await readBody(req));
         const email = normalEmail(fields.get('email'));
-        const user = validEmail(email) ? db.prepare('SELECT * FROM users WHERE email=? AND enabled=1').get(email) : null;
+        const user = validEmail(email) ? db.prepare("SELECT * FROM users WHERE email=? AND enabled=1 AND role<>'carer'").get(email) : null;
         const valid = await validPassword(fields.get('password'),user?.password_hash ?? dummyHash);
         const current = user && db.prepare('SELECT password_hash FROM users WHERE email=? AND enabled=1').get(email);
         if (!valid || !current || current.password_hash !== user.password_hash) return login(res,401,'Email or password is incorrect.');
@@ -214,6 +216,33 @@ function startServer() {
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
       if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      if (path==='/api/calendar') {
+        requireCondition(calendar.calendarView(actor),'You do not have access to this calendar.',403);
+        if(req.method==='GET') {
+          const params=new URL(req.url,origin).searchParams;
+          if(params.has('history')) {
+            const row=db.prepare(calendar.calendarReadSql).get(params.get('history'));
+            requireCondition(calendar.canReadCalendar(actor,user.email,row)&&row.owner_key===user.email,'Calendar history not found.',404);
+            return json(res,200,db.prepare(calendar.calendarHistorySql).all(row.id));
+          }
+          const query=calendar.calendarQuery(readState(),actor,user.email,params,requireCondition);
+          const read=item=>db.prepare(item.sql).all(...item.args).map(row=>calendar.calendarEntry(actor,user.email,row));
+          return json(res,200,{events:read(query.events),reminders:read(query.reminders)});
+        }
+        if(req.method==='POST') {
+          requireCondition((req.headers['content-type']??'').split(';')[0]==='application/json','Use JSON for this request.',415);
+          let body;
+          try {body=JSON.parse(await readBody(req,24000));}
+          catch(error) {if(error instanceof AppError) throw error; throw new AppError(400,'Invalid JSON request.');}
+          requireCondition(body && typeof body==='object' && !Array.isArray(body) && (!body.id||typeof body.id==='string'),'Invalid calendar item.');
+          const current=userOf(req);
+          requireCondition(current,'Sign in to continue.',401);
+          const prior=body.id?db.prepare(calendar.calendarReadSql).get(body.id):null;
+          const event=calendar.prepareCalendar(readState(),actorOf(current),current.email,body,prior,requireCondition);
+          requireCondition(db.prepare(event.sql).run(...event.args).changes===1,'This event changed. Reload and try again.',409);
+          return json(res,prior?200:201,{id:event.id});
+        }
+      }
       if (path==='/api/diary') {
         requireCondition(diary.diaryView(actor),'You do not have access to this diary.',403);
         if (req.method==='GET') {

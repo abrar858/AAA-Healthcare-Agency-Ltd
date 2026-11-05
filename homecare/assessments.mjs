@@ -19,7 +19,7 @@ const escapeHtml = value => String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp
 
 export function assessmentView(state,actor) {
   if (!['admin','manager','team_leader'].includes(actor.role)) return null;
-  return {canBuild:canBuild(actor),
+  return {canBuild:canBuild(actor),canComplete:['admin','team_leader'].includes(actor.role),
     templates:allTemplates(state).filter(item=>!item.branch||sameBranch(actor,item)),
     records:(state.assessments??[]).filter(item=>sameBranch(actor,item))};
 }
@@ -59,6 +59,7 @@ export function changeAssessment(state,actor,action,id,fields,requireCondition) 
     return;
   }
   demand(action==='save-assessment','Unknown assessment action.',400);
+  demand(['admin','team_leader'].includes(actor.role),'A team leader or Head Office Admin must complete this assessment.',403);
   const prior=id?state.assessments.find(item=>item.id===id):null;
   if(id) demand(prior&&sameBranch(actor,prior));
   if(prior) demand(!prior.completedAt&&Number(fields.version)===prior.version,'This assessment has already changed. Reload before editing.',409);

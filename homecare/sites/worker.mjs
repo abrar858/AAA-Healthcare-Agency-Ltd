@@ -7,9 +7,9 @@ function response(body,status=200,headers={}) {
   }});
 }
 function publicState(state,actor) {
-  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor)};
+  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor)};
 }
-const staffRoles=['manager','team_leader','hr','rota','accounts','carer'];
+const staffRoles=['manager','team_leader','hr','rota','accounts'];
 const denied='This account has no access to the workspace.';
 function memberOf(env,email) {
   return env.DB.prepare('SELECT email,label,role,branch,staff,identity_id,enabled,version FROM aaa_staff_access WHERE email=?').bind(email).first();
@@ -19,16 +19,16 @@ async function authenticate(request,env) {
   const email=request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
   domain.requireCondition(id && email,'Sign in to continue.',401);
   domain.requireCondition(env.AAA_OWNER_EMAIL,'Workspace sign-in is unavailable.',503);
-  if (email===env.AAA_OWNER_EMAIL) return {actor:{label:'Head Office Admin',role:'admin',branch:null,staff:null}};
+  if (email===env.AAA_OWNER_EMAIL) return {calendarKey:id,actor:{label:'Head Office Admin',role:'admin',branch:null,staff:null}};
   let member=await memberOf(env,email);
-  domain.requireCondition(member?.enabled && (!member.identity_id || member.identity_id===id),denied,403);
+  domain.requireCondition(member?.enabled && member.role!=='carer' && (!member.identity_id || member.identity_id===id),denied,403);
   if (!member.identity_id) {
     await env.DB.prepare('UPDATE OR IGNORE aaa_staff_access SET identity_id=? WHERE email=? AND enabled=1 AND identity_id IS NULL').bind(id,email).run();
     member=await memberOf(env,email);
   }
-  domain.requireCondition(member?.enabled && member.identity_id===id,denied,403);
+  domain.requireCondition(member?.enabled && member.role!=='carer' && member.identity_id===id,denied,403);
   const {label,role,branch,staff,version}=member;
-  return {actor:{label,role,branch,staff},membership:{email,id,version}};
+  return {calendarKey:id,actor:{label,role,branch,staff},membership:{email,id,version}};
 }
 async function staffAccess(env) {
   const list=await env.DB.prepare('SELECT email,label,role,branch,staff,enabled,version,updated_at FROM aaa_staff_access ORDER BY enabled DESC, label COLLATE NOCASE, email').all();
@@ -154,6 +154,36 @@ export default {
         });
       }
       if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      if (path==='/api/calendar') {
+        domain.requireCondition(calendar.calendarView(actor),'You do not have access to this calendar.',403);
+        const {state}=await workspace(env);
+        const key=auth.calendarKey;
+        if(request.method==='GET') {
+          const params=new URL(request.url).searchParams;
+          if(params.has('history')) {
+            const row=await env.DB.prepare(calendar.calendarReadSql).bind(params.get('history')).first();
+            domain.requireCondition(calendar.canReadCalendar(actor,key,row)&&row.owner_key===key,'Calendar history not found.',404);
+            return json((await env.DB.prepare(calendar.calendarHistorySql).bind(row.id).all()).results);
+          }
+          const query=calendar.calendarQuery(state,actor,key,params,domain.requireCondition);
+          const result=await Promise.all([query.events,query.reminders].map(item=>env.DB.prepare(item.sql).bind(...item.args).all()));
+          return json({events:result[0].results.map(row=>calendar.calendarEntry(actor,key,row)),reminders:result[1].results.map(row=>calendar.calendarEntry(actor,key,row))});
+        }
+        if(request.method==='POST') {
+          domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
+          const body=await readJson(request,24000);
+          domain.requireCondition(body && typeof body==='object' && !Array.isArray(body) && (!body.id||typeof body.id==='string'),'Invalid calendar item.');
+          const prior=body.id?await env.DB.prepare(calendar.calendarReadSql).bind(body.id).first():null;
+          const event=calendar.prepareCalendar(state,actor,key,body,prior,domain.requireCondition);
+          const membership=auth.membership;
+          const condition=(prior?' AND':' WHERE')+' EXISTS (SELECT 1 FROM aaa_staff_access WHERE email=? AND identity_id=? AND version=? AND enabled=1)';
+          const result=membership
+            ?await env.DB.prepare(event.sql+condition).bind(...event.args,membership.email,membership.id,membership.version).run()
+            :await env.DB.prepare(event.sql).bind(...event.args).run();
+          domain.requireCondition(result.meta.changes===1,'Your access or this event changed. Reload and try again.',409);
+          return json({id:event.id},prior?200:201);
+        }
+      }
       if (path==='/api/diary') {
         domain.requireCondition(diary.diaryView(actor),'You do not have access to this diary.',403);
         const {state}=await workspace(env);

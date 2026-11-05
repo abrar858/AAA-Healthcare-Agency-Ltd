@@ -15,7 +15,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -121,6 +121,31 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal(afterFollowup.entries[1].note,note.note);
     assert.equal((await (await request('/api/diary?type=carer&category=Phone+call','manager')).json()).entries.length,1);
     assert.equal((await request('/api/diary?type=client&branch=Blackburn','manager')).status,403);
+    const calendar='/api/calendar';
+    const draftEvent={branch:'Preston',title:'Fictional review',kind:'Assessment due',start_at:'2000-01-10T09:00',end_at:'2000-01-10T10:00',reminder_at:'2000-01-09T09:00',audience:'private',status:'scheduled',notes:'Personal note'};
+    const created=(await (await request(calendar,'leader',draftEvent)).json()).id;
+    const month=calendar+'?month=2000-01';
+    assert.equal((await (await request(month,manager)).json()).events.length,0);
+    assert.equal((await (await request(month,owner)).json()).events.length,0);
+    const personal=await (await request(month,'leader')).json();
+    assert.equal(personal.events[0].id,created);
+    assert.equal(personal.events[0].owner_key,undefined);
+    assert.equal(personal.reminders[0].id,created);
+    assert.equal((await request(calendar,manager,{...draftEvent,id:created,version:1})).status,403);
+    assert.equal((await request(calendar,'leader',{...draftEvent,id:created,version:1,audience:'branch',carer_summary:'Fictional general summary'})).status,200);
+    assert.equal((await (await request(month,manager)).json()).events[0].id,created);
+    assert.equal((await (await request(month,'other')).json()).events.length,0);
+    assert.equal((await request(month+'&branch=Preston','other')).status,403);
+    assert.equal((await request(calendar+'?history='+created,manager)).status,404);
+    assert.equal((await (await request(calendar+'?history='+created,'leader')).json())[0].audience,'private');
+    assert.equal((await request(calendar,manager,{...draftEvent,id:created,version:2})).status,403);
+    assert.equal((await request(calendar,manager,{...draftEvent,id:created,version:2,audience:'branch',status:'completed'})).status,200);
+    assert.equal((await (await request(month,'leader')).json()).reminders.length,0);
+    assert.equal((await request(calendar,'leader',{...draftEvent,id:created,version:2})).status,409);
+    assert.equal((await access(owner,'save-access',{...grant,email:'paused@example.invalid',role:'carer',staff:staff.id})).status,400);
+    storage.prepare('INSERT INTO aaa_staff_access (email,label,role,branch,staff,updated_at) VALUES (?,?,?,?,?,?)').run('paused@example.invalid','Paused Carer','carer','Preston',staff.id,new Date().toISOString());
+    assert.equal((await request('/api/state','paused')).status,403);
+    assert.equal((await request(month,'paused')).status,403);
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
     assert.equal((await request('/api/state',manager)).status,403);

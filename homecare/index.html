@@ -14,6 +14,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 @media(max-width:620px){.shell{display:block}.sidebar{padding:12px;gap:10px}.nav{display:flex;flex-wrap:wrap}.nav button{padding:.35rem .55rem;font-size:.84rem}.sidefoot{display:flex;align-items:center;justify-content:space-between;padding-top:6px;gap:8px}.sidefoot small{margin:0}.topbar{padding:10px 12px}.topbar label{flex-wrap:wrap}.content{padding:15px 12px 35px}.hero{padding:17px}.card{padding:11px}th,td{padding:8px 10px}}
 .assessment-body{padding:16px 17px}.assessment-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:10px}.assessment-card{min-width:0;border:1px solid var(--line);border-radius:12px;padding:13px;display:grid;gap:7px;overflow-wrap:anywhere}.diary-card{grid-column:1/-1}.diary-meta{color:var(--muted);font-size:.85rem}.diary-note{white-space:pre-wrap;overflow-wrap:anywhere;margin:.35rem 0}.assessment-card .actions a{padding:.35rem .65rem;border:1px solid var(--line);border-radius:8px;color:var(--green);text-decoration:none;font-size:.88rem}.assessment-body .form-fields{max-width:760px}.assessment-question{min-width:0;display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:9px}.assessment-question .actions{justify-content:flex-end}.assessment-body textarea{min-height:7rem}.assessment-error{color:#a13629}.assessment-body input[type=checkbox]{width:auto}.assessment-body [hidden]{display:none!important}
 @media(max-width:620px){.assessment-body{padding:13px 12px}.assessment-body input,.assessment-body textarea,.assessment-body select{font-size:16px}.assessment-card .actions a,.assessment-body button{min-height:42px;display:inline-flex;align-items:center}}
+.calendar-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:13px}.calendar-tools select,.calendar-tools input{width:auto;max-width:100%}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.calendar-grid button{text-align:left;min-height:58px;min-width:0;padding:5px;overflow-wrap:anywhere}.calendar-grid button[aria-pressed=true]{border:2px solid var(--green);background:#dff1e7}.calendar-grid small{display:block}.calendar-grid .weekday{text-align:center;font-size:.8rem;color:var(--muted)}.calendar-mobile{display:none}.calendar-note{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:620px){.calendar-grid{display:none}.calendar-mobile{display:block}}
 </style>
 </head>
 <body>
@@ -37,7 +38,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
-const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary' };
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
@@ -96,7 +97,7 @@ const navigation = () => {
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  return [...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(staffAccess?['access']:[]),...roles[actor.role].pages];
+  return [...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...roles[actor.role].pages];
 };
 let page = navigation()[0];
 let saveAction;
@@ -437,7 +438,7 @@ $('#view').addEventListener('submit',event=>{
 });
 
 
-const hostedRoles = ['manager','team_leader','hr','rota','accounts','carer'];
+const hostedRoles = ['manager','team_leader','hr','rota','accounts'];
 function accessPage() {
   return hero('Staff access','Assign app access by email, role and branch.')+
     panel('Rollout steps','The private site has a separate invitation list.',
@@ -445,8 +446,8 @@ function accessPage() {
     panel('Staff access register','An enabled entry allows the assigned role after the person has been invited to the private site.',
       table(['Staff member','Sign-in email','Role','Branch','App access','Actions'],staffAccess.filter(entry=>inScope(entry.branch)).map(entry=>[
         h(entry.label),h(entry.email),h(roles[entry.role]?.label),h(entry.branch),
-        badge(entry.enabled?'Enabled':'Revoked',entry.enabled?'ok':'bad'),
-        actions(button(entry.enabled?'Edit':'Restore','save-access',entry.email),entry.enabled&&button('Revoke','revoke-access',entry.email,'small danger'))
+        badge(entry.role==='carer'?'Carer access paused':entry.enabled?'Enabled':'Revoked',entry.role==='carer'?'warn':entry.enabled?'ok':'bad'),
+        actions(entry.role!=='carer'&&button(entry.enabled?'Edit':'Restore','save-access',entry.email),entry.enabled&&button('Revoke','revoke-access',entry.email,'small danger'))
       ]),'No staff access entries yet.'),button('Add access','save-access','','primary'));
 }
 const hiddenField = (name,value)=>'<input type="hidden" name="'+name+'" value="'+h(value)+'">';
@@ -563,14 +564,14 @@ function assessmentsPage() {
         return card(record.template.title,'<span>'+h(record.subjectName+' · '+record.branch)+'</span><small>'+h(displayDate(record.date))+' · '+
           h(record.updatedBy)+'</small><div>'+badge(record.completedAt?'Completed':'Draft',record.completedAt?'ok':'warn')+'</div>',
           record.completedAt?actions('<a href="'+url+'?view=1" target="_blank" rel="noopener">View / Print</a>',
-            '<a href="'+url+'" download>Download</a>'):actions(button('Continue draft','assessment-draft',record.id)));
+            '<a href="'+url+'" download>Download</a>'):actions(db.assessment.canComplete&&button('Continue draft','assessment-draft',record.id)));
       }).join('')+'</div>':'<p class="muted">No assessments have been saved yet.</p>')+'</div>')+
     panel('Form templates','Use a starter form or create a template for your team.',
       '<div class="assessment-body"><div class="assessment-grid">'+templates.map(template=>{
         const available=assessmentPeople(template.subject).some(person=>!template.branch||person.branch===template.branch);
         const canArchive=!template.builtIn&&db.assessment.canBuild&&(actor.role==='admin'||actor.branch===template.branch);
         return card(template.title,'<small>'+h((template.subject==='client'?'Client':'Carer')+' · '+(template.branch??'All branches')+' · '+template.questions.length+' questions')+'</small>',
-          actions(available?button('Start assessment','assessment-screen','start:'+template.id):'<small class="muted">Add a '+template.subject+' in this branch first.</small>',
+          actions(db.assessment.canComplete&&available?button('Start assessment','assessment-screen','start:'+template.id):db.assessment.canComplete?'<small class="muted">Add a '+template.subject+' in this branch first.</small>':'',
           canArchive&&button('Archive','archive-template',template.id)));
       }).join('')+'</div></div>',db.assessment.canBuild?button('Create form','assessment-screen','template','primary'):'');
 }
@@ -713,6 +714,128 @@ $('#view').addEventListener('submit',event=>{
   void loadDiary();
 });
 
+
+let calendarMonth=today.slice(0,7), calendarDay='', calendarMode='all';
+let calendarResult={events:[],reminders:[]}, calendarLoading=false, calendarError='', calendarRequest=0;
+const calendarModes=[['all','My events and branch events'],['mine','My events'],['branch','Branch-shared events']];
+const calendarStatuses=[['scheduled','Scheduled'],['completed','Completed'],['cancelled','Cancelled']];
+const calendarTime=value=>value?displayDate(value.slice(0,10))+' · '+value.slice(11):'—';
+const calendarEventById=id=>calendarResult.events.find(event=>event.id===id)??calendarResult.reminders.find(event=>event.id===id);
+async function fetchCalendar(params) {
+  const response=await fetch('/api/calendar?'+new URLSearchParams(params));
+  if(response.status===401) location.assign(live?.site?'/signin-with-chatgpt?return_to=%2F':'/login');
+  const data=await response.json();
+  if(!response.ok) throw new Error(data.error);
+  return data;
+}
+async function loadCalendar() {
+  const request=++calendarRequest;
+  calendarLoading=true;calendarError='';render();
+  try {
+    const data=await fetchCalendar({month:calendarMonth,view:calendarMode,branch:scope==='All branches'?'':scope});
+    if(request===calendarRequest) calendarResult=data;
+  } catch(error) {
+    if(request===calendarRequest) calendarError=error.message;
+  } finally {
+    if(request===calendarRequest) {
+      calendarLoading=false;
+      if(page==='calendar') render();
+    }
+  }
+}
+function moveCalendar(direction) {
+  const d=new Date(calendarMonth+'-01T00:00:00Z');
+  if(direction==='today') calendarMonth=today.slice(0,7);
+  else {
+    d.setUTCMonth(d.getUTCMonth()+Number(direction));
+    calendarMonth=d.toISOString().slice(0,7);
+  }
+  calendarDay='';
+  void loadCalendar();
+}
+function openCalendarDay(day) {calendarDay=day;render();}
+function calendarPage() {
+  const first=new Date(calendarMonth+'-01T00:00:00Z');
+  const monthTitle=first.toLocaleDateString('en-GB',{month:'long',year:'numeric',timeZone:'UTC'});
+  const lead=(first.getUTCDay()+6)%7;
+  const days=new Date(Date.UTC(first.getUTCFullYear(),first.getUTCMonth()+1,0)).getUTCDate();
+  const options=opts(calendarModes).replace('value="'+calendarMode+'"','value="'+calendarMode+'" selected');
+  const visible=calendarResult.events.filter(event=>!calendarDay||event.start_at.startsWith(calendarDay));
+  const card=event=>'<article class="assessment-card"><strong>'+h(event.title)+'</strong><small>'+h(event.kind+' · '+event.branch+' · '+calendarTime(event.start_at))+'</small>'+
+    '<div>'+badge(event.audience==='private'?'Personal':'Branch shared')+' '+badge(calendarStatuses.find(([key])=>key===event.status)?.[1],event.status==='cancelled'?'bad':'')+'</div>'+
+    actions(button(event.canEdit?'Open / edit':'View','calendar-event',event.id),event.mine&&button('History','calendar-history',event.id))+'</article>';
+  const reminders=calendarLoading?'':calendarResult.reminders.length?panel('Reminders due','Open an event to review it or mark it completed.',
+    '<div class="assessment-body assessment-grid">'+calendarResult.reminders.map(card).join('')+'</div>'):'';
+  const grid='<div class="calendar-grid" aria-label="Month view">'+['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(day=>'<span class="weekday">'+day+'</span>').join('')+
+    '<span></span>'.repeat(lead)+Array.from({length:days},(_,index)=>{
+      const day=calendarMonth+'-'+String(index+1).padStart(2,'0');
+      const count=calendarResult.events.filter(event=>event.status!=='cancelled'&&event.start_at.startsWith(day)).length;
+      return '<button type="button" aria-label="'+h(displayDate(day))+'" aria-pressed="'+(calendarDay===day)+'" data-action="calendar-day" data-id="'+day+'">'+(index+1)+
+        (count?'<small>'+count+(count===1?' event':' events')+'</small>':'')+'</button>';
+    }).join('')+'</div>';
+  const agenda=calendarLoading?'<p role="status">Loading calendar…</p>':calendarError?'<p role="alert" class="assessment-error">'+h(calendarError)+'</p>':
+    visible.length?'<div class="assessment-grid">'+visible.map(card).join('')+'</div>':'<p class="muted">No events in this selection.</p>';
+  return hero('Calendar','Keep appointments, reviews and reminders in your own calendar or share them with your branch.')+
+    reminders+panel(monthTitle,'All event times use UK local time.',
+      '<div class="assessment-body"><div class="calendar-tools">'+button('Previous month','calendar-month','-1')+
+      button('This month','calendar-month','today')+button('Next month','calendar-month','1')+
+      '<label>Show <select id="calendar-mode">'+options+'</select></label>'+
+      '<label class="calendar-mobile">Day <input id="calendar-mobile-day" type="date" min="'+calendarMonth+'-01" max="'+calendarMonth+'-'+days+'" value="'+h(calendarDay)+'"></label>'+
+      (calendarDay?button('Show whole month','calendar-day'):'')+'</div>'+(!calendarLoading&&!calendarError?grid:'')+
+      '<h2 style="margin:15px 0 8px">'+(calendarDay?'Agenda for '+h(displayDate(calendarDay)):'Month agenda')+'</h2>'+agenda+'</div>',
+      db.branches.length?button('Add event','calendar-event','','primary'):'');
+}
+function calendarEditor(id) {
+  const event=id?calendarEventById(id):null;
+  ensure(!id||event,'This calendar item is unavailable.');
+  if(event&&!event.canEdit) {
+    pendingAction={action:'read-calendar',id};
+    showEditor(event.title,'<p>'+h(calendarTime(event.start_at))+'</p><p class="muted">'+h(event.branch+' · '+event.kind+' · '+event.author)+'</p>'+
+      '<p class="calendar-note">'+h(event.notes)+'</p>',()=>{},'Done');
+    return;
+  }
+  pendingAction={action:'save-calendar',id};
+  const branches=db.branches.filter(inScope).map(branch=>[branch,branch]);
+  const date=calendarDay||(calendarMonth===today.slice(0,7)?today:calendarMonth+'-01');
+  showEditor(event?'Edit calendar event':'Add calendar event',
+    hiddenField('id',event?.id??'')+hiddenField('version',event?.version??0)+
+    (event?hiddenField('branch',event.branch)+'<p class="muted">'+h(event.branch)+'</p>':select('Branch','branch',branches))+
+    field('Title','title','maxlength="160" required',event?.title)+select('Type','kind',db.calendar.types.map(kind=>[kind,kind]))+
+    field('Starts','start_at','type="datetime-local" required',event?.start_at??date+'T09:00')+
+    field('Ends (optional)','end_at','type="datetime-local"',event?.end_at)+
+    field('Remind at (optional)','reminder_at','type="datetime-local"',event?.reminder_at)+
+    (event&&!event.mine?hiddenField('audience',event.audience)+'<p class="muted">Shared with branch</p>':
+      select('Visibility','audience',[['private','Personal · only me'],['branch','Shared within this branch']]))+
+    '<div id="calendar-carer-summary" hidden>'+field('Summary for future carer sharing (optional)','carer_summary','maxlength="300"',event?.carer_summary)+
+    '<small class="muted">Carer sign-in is paused. This summary will remain internal until future sharing is enabled.</small></div>'+
+    select('Status','status',calendarStatuses)+'<label>Notes<textarea name="notes" maxlength="3000">'+h(event?.notes)+'</textarea></label>',
+    ()=>{},'Save event');
+  const fields=$('#editor-fields'), audience=fields.querySelector('[name="audience"]');
+  fields.querySelector('[name="kind"]').value=event?.kind??'Appointment';
+  fields.querySelector('[name="status"]').value=event?.status??'scheduled';
+  audience.value=event?.audience??'private';
+  const updateSharing=()=>{
+    const container=fields.querySelector('#calendar-carer-summary');
+    container.hidden=audience.value!=='branch';
+    container.querySelector('input').disabled=container.hidden;
+  };
+  audience.addEventListener('change',updateSharing);
+  updateSharing();
+}
+async function openCalendarHistory(id) {
+  const history=await fetchCalendar({history:id});
+  if(page!=='calendar') return;
+  pendingAction={action:'read-calendar',id};
+  showEditor('Earlier calendar versions',history.length?table(['Version','Event','Status','Changed by'],history.map(item=>[
+    h(item.version),h(item.title)+'<br><small>'+h(calendarTime(item.start_at))+'</small><p class="calendar-note">'+h(item.notes)+'</p>',
+    h(item.status),h(item.updated_by)+'<br><small>'+h(diaryTimestamp(item.updated_at))+'</small>'
+  ])):'<p>No earlier versions have been saved.</p>',()=>{},'Done');
+}
+$('#view').addEventListener('change',event=>{
+  if(event.target.id==='calendar-mode') {calendarMode=event.target.value;void loadCalendar();}
+  if(event.target.id==='calendar-mobile-day') openCalendarDay(event.target.value);
+});
+
 function render() {
   if (!live) {
     $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
@@ -724,7 +847,7 @@ function render() {
   $('#nav').innerHTML = navigation().map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage
+    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage
   }[page]();
 }
 
@@ -870,10 +993,10 @@ $('#role').addEventListener('change',event=>{
   notice('');
   render();
 });
-$('#branch').addEventListener('change',event=>{scope=event.target.value;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;notice('');if(page==='diary') void loadDiary(); else render();});
+$('#branch').addEventListener('change',event=>{scope=event.target.value;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else render();});
 $('#nav').addEventListener('click',event=>{
   const target=event.target.closest('[data-page]');
-  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;notice('');if(page==='diary') void loadDiary(); else render();}
+  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else render();}
 });
 $('#editor-cancel').addEventListener('click',()=>$('#editor').close());
 async function sendAction(action, id, fields = {}) {
@@ -883,13 +1006,18 @@ async function sendAction(action, id, fields = {}) {
   try {
     const accessAction = ['save-access','revoke-access'].includes(action);
     const diaryAction = action==='add-diary';
-    const endpoint = diaryAction?'/api/diary':accessAction?'/api/access':action==='save-compliance'?'/api/compliance':'/api/action';
+    const calendarAction = action==='save-calendar';
+    const endpoint = calendarAction?'/api/calendar':diaryAction?'/api/diary':accessAction?'/api/access':action==='save-compliance'?'/api/compliance':'/api/action';
     const response = await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(diaryAction?fields:{action,id,fields})});
+      body:JSON.stringify(diaryAction||calendarAction?fields:{action,id,fields})});
     if (response.status===401) {location.assign(live?.site?'/signin-with-chatgpt?return_to=%2F':'/login');return false;}
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
-    if (diaryAction) {
+    if (calendarAction) {
+      calendarMonth=fields.start_at.slice(0,7);
+      calendarDay='';
+      await loadCalendar();
+    } else if (diaryAction) {
       diaryFilters={type:fields.type,subject:fields.subject,category:'',page:0};
       await loadDiary();
     } else {
@@ -907,7 +1035,7 @@ $('#editor-form').addEventListener('submit',async event=>{
   event.preventDefault();
   const fields = new FormData(event.target);
   try {
-    if (live && !['visit-record','compliance-history','read-diary'].includes(pendingAction?.action)) {
+    if (live && !['visit-record','compliance-history','read-diary','read-calendar'].includes(pendingAction?.action)) {
       const values = Object.fromEntries(fields);
       if (pendingAction.action==='save-compliance') {
         const file = values.pdf;
@@ -932,6 +1060,8 @@ $('#view').addEventListener('click',async event=>{
   const visit=visitById(id);
   try {
     const handlers={
+      'calendar-month':()=>moveCalendar(id), 'calendar-day':()=>openCalendarDay(id),
+      'calendar-event':()=>calendarEditor(id), 'calendar-history':()=>openCalendarHistory(id),
       'person-diary':()=>openPersonDiary(id), 'add-diary':()=>diaryEditor(), 'diary-follow-up':()=>diaryEditor(id), 'read-diary':()=>viewDiaryEntry(id),
       'diary-page':()=>moveDiaryPage(id),
       'assessment-screen':()=>openAssessmentScreen(id), 'assessment-draft':()=>openAssessmentDraft(id),
