@@ -7,7 +7,7 @@ function response(body,status=200,headers={}) {
   }});
 }
 function publicState(state,actor) {
-  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor)};
+  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor)};
 }
 const staffRoles=['manager','team_leader','hr','rota','accounts','carer'];
 const denied='This account has no access to the workspace.';
@@ -154,6 +154,34 @@ export default {
         });
       }
       if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      if (path==='/api/diary') {
+        domain.requireCondition(diary.diaryView(actor),'You do not have access to this diary.',403);
+        const {state}=await workspace(env);
+        if (request.method==='GET') {
+          const params=new URL(request.url).searchParams;
+          if(params.has('entry')) {
+            const record=await env.DB.prepare(diary.diaryEntrySql).bind(params.get('entry')).first();
+            domain.requireCondition(diary.canReadDiaryEntry(actor,record),'Diary entry not found.',404);
+            return json(record);
+          }
+          const query=diary.diaryListQuery(state,actor,params,domain.requireCondition);
+          return json(diary.diaryList((await env.DB.prepare(query.sql).bind(...query.values).all()).results));
+        }
+        if (request.method==='POST') {
+          domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
+          const fields=await readJson(request,24000);
+          domain.requireCondition(fields && typeof fields==='object' && !Array.isArray(fields) && (!fields.related || typeof fields.related==='string'),'Invalid diary entry.');
+          const parent=fields.related?await env.DB.prepare(diary.diaryEntrySql).bind(fields.related).first():null;
+          const entry=diary.prepareDiaryEntry(state,actor,fields,parent,domain.requireCondition);
+          const membership=auth.membership;
+          const result=membership
+            ? await env.DB.prepare(diary.diaryInsertSql+' WHERE EXISTS (SELECT 1 FROM aaa_staff_access WHERE email=? AND identity_id=? AND version=? AND enabled=1)')
+              .bind(...entry,membership.email,membership.id,membership.version).run()
+            : await env.DB.prepare(diary.diaryInsertSql).bind(...entry).run();
+          domain.requireCondition(result.meta.changes===1,'Your access changed. Reload and try again.',403);
+          return json({id:entry[0]},201);
+        }
+      }
       const assessmentId=/^\/api\/assessment-document\/([a-f0-9-]{36})$/.exec(path)?.[1];
       if (request.method==='GET' && assessmentId) {
         const {state}=await workspace(env);

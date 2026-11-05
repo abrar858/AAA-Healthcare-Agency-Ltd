@@ -15,7 +15,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -98,10 +98,34 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await action(manager,'archive-assessment-template',{},template.id)).status,200);
     assert.equal((await action('leader','save-assessment',{...form,answers:['Pass',''],complete:true})).status,403);
     assert.equal((await request(documentPath,'leader')).status,200);
+    const note={type:'client',subject:client.id,date:reviewed,time:'10:30',category:'Visit change',note:'Sample visit extended to 12:00.'};
+    assert.equal((await request('/api/diary','other',note)).status,403);
+    const logged=await request('/api/diary','leader',note);
+    assert.equal(logged.status,201);
+    const entry=await logged.json();
+    const personDiary='/api/diary?type=client&subject='+client.id;
+    assert.equal((await request(personDiary,'other')).status,403);
+    assert.equal((await request('/api/diary?entry='+entry.id,'other')).status,404);
+    const clientLog=await (await request(personDiary,'manager')).json();
+    assert.equal(clientLog.entries[0].occurred_time,'10:30');
+    assert.equal(clientLog.entries[0].author,leader.label);
+    const staffFields={branch:'Preston',name:'Fictional Staff'};
+    const staff=(await (await action(owner,'add-staff',staffFields)).json()).staff[0];
+    const carerNote={...note,type:'carer',subject:staff.id,category:'Phone call'};
+    assert.equal((await request('/api/diary','leader',{...carerNote,related:entry.id})).status,403);
+    assert.equal((await request('/api/diary','leader',carerNote)).status,201);
+    assert.equal((await request('/api/diary','manager',{...note,time:'11:00',category:'Follow-up / correction',note:'Sample time confirmed.',related:entry.id})).status,201);
+    const afterFollowup=await (await request(personDiary,'manager')).json();
+    assert.equal(afterFollowup.entries.length,2);
+    assert.equal(afterFollowup.entries[0].related,entry.id);
+    assert.equal(afterFollowup.entries[1].note,note.note);
+    assert.equal((await (await request('/api/diary?type=carer&category=Phone+call','manager')).json()).entries.length,1);
+    assert.equal((await request('/api/diary?type=client&branch=Blackburn','manager')).status,403);
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
     assert.equal((await request('/api/state',manager)).status,403);
     assert.equal((await request(file,manager)).status,403);
+    assert.equal((await request(personDiary,manager)).status,403);
     assert.equal((await access(owner,'save-access',{...grant,version:revoked.version})).status,200);
     assert.equal((await request('/api/state',manager)).status,200);
   } finally {

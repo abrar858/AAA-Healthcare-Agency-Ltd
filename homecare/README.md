@@ -56,3 +56,7 @@ The Sites checkout uses a Worker manifest with `d1: "DB"` and `r2: "BUCKET"`, an
 Head Office Admin can create templates for all branches or a selected branch. Branch managers can create and archive templates for their own branch. Managers and team leaders can start and complete client and carer assessments in their branch. Team leaders are added through Staff access using the same two-step private invitation process as other staff.
 
 Starter templates cover initial homecare, risks, care reviews, competency, supervision and observed practice. Add your own questions with text, date, number and choice fields. Drafts can be reopened. Once completed, records are locked and can be downloaded as a self-contained HTML document or opened in **View / Print** to print or save as PDF using the browser.
+
+## Client and carer diaries
+
+Head Office Admin, managers and team leaders can open **Diary**, select clients or carers, and filter by person or category. Managers can also open a person’s diary from the staff or client list. Each entry records the event date, optional time, notes, who logged it and when. Use **Add follow-up** on an entry to link an update or correction while retaining the original. Managers and team leaders are restricted to their own branch.

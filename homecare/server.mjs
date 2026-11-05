@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { complianceView, permittedCatalog, recordCompliance } from './compliance.mjs';
 import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
+import * as diary from './diary.mjs';
 import { initialState, roles, applyAction, project, AppError, requireCondition } from './domain.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -30,9 +31,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS compliance_pdfs (id TEXT PRIMARY KEY, body BLOB NOT NULL);
   CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
 `);
+db.exec(readFileSync(new URL('./sites/drizzle/0003_aaa_diary.sql',import.meta.url),'utf8'));
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
-const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor)});
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -212,6 +214,32 @@ function startServer() {
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
       if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      if (path==='/api/diary') {
+        requireCondition(diary.diaryView(actor),'You do not have access to this diary.',403);
+        if (req.method==='GET') {
+          const params=new URL(req.url,origin).searchParams;
+          if(params.has('entry')) {
+            const record=db.prepare(diary.diaryEntrySql).get(params.get('entry'));
+            requireCondition(diary.canReadDiaryEntry(actor,record),'Diary entry not found.',404);
+            return json(res,200,record);
+          }
+          const query=diary.diaryListQuery(readState(),actor,params,requireCondition);
+          return json(res,200,diary.diaryList(db.prepare(query.sql).all(...query.values)));
+        }
+        if (req.method==='POST') {
+          requireCondition((req.headers['content-type']??'').split(';')[0]==='application/json','Use JSON for this request.',415);
+          let fields;
+          try { fields=JSON.parse(await readBody(req,24000)); }
+          catch(error) {if(error instanceof AppError) throw error; throw new AppError(400,'Invalid JSON request.');}
+          requireCondition(fields && typeof fields==='object' && !Array.isArray(fields) && (!fields.related || typeof fields.related==='string'),'Invalid diary entry.');
+          const current=userOf(req);
+          requireCondition(current,'Sign in to continue.',401);
+          const parent=fields.related?db.prepare(diary.diaryEntrySql).get(fields.related):null;
+          const entry=diary.prepareDiaryEntry(readState(),actorOf(current),fields,parent,requireCondition);
+          db.prepare(diary.diaryInsertSql).run(...entry);
+          return json(res,201,{id:entry[0]});
+        }
+      }
       const assessmentId=/^\/api\/assessment-document\/([a-f0-9-]{36})$/.exec(path)?.[1];
       if (req.method === 'GET' && assessmentId) {
         const record=assessmentView(readState(),actor)?.records.find(item=>item.id===assessmentId&&item.completedAt);

@@ -117,6 +117,10 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     assert.equal((await state(preston)).compliance.length,0);
     assert.equal((await request('/api/compliance-pdf/'+hrDocument.id,{headers:{Cookie:preston}})).status,404);
     assert.equal((await request('/api/compliance-pdf/'+hrDocument.id,{headers:{Cookie:admin}})).status,200);
+    const diaryEntry={type:'client',subject:client.id,date:reviewed,time:'10:30',category:'Visit change',note:'Fictional visit extension'};
+    const writeDiary=(cookie,body)=>request('/api/diary',{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal((await writeDiary(preston,diaryEntry)).status,403);
+    assert.equal((await writeDiary(blackburn,diaryEntry)).status,201);
     const visit = (await action(blackburn,'add-visit','',{client:client.id,date:'2026-11-05',time:'12:00',minutes:'30',required:'1'})).visits[0];
     assert.deepEqual((await state(preston)).branches,['Preston']);
     assert.equal((await state(preston)).clients.length,0);
@@ -143,6 +147,8 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     assert.equal((await state(admin)).visits[0].assignments[0].note,'Fictional care note');
     assert.equal((await request(pdfPath,{headers:{Cookie:blackburn}})).status,200);
     assert.equal((await state(admin)).compliance.length,4);
+    const diary=await request('/api/diary?type=client',{headers:{Cookie:blackburn}});
+    assert.equal((await diary.json()).entries[0].note,diaryEntry.note);
     assert.equal((await request('/logout',{method:'POST',headers:{Cookie:carer,Origin:origin}})).status,303);
     assert.equal((await request('/api/state',{headers:{Cookie:carer}})).status,401);
     const revoke=spawnSync(process.execPath,[script,'disable-user','preston@example.invalid'],{env,encoding:'utf8'});
