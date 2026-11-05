@@ -130,7 +130,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     const clientLog=await (await request(personDiary,'manager')).json();
     assert.equal(clientLog.entries[0].occurred_time,'10:30');
     assert.equal(clientLog.entries[0].author,leader.label);
-    const staffFields={branch:'Preston',name:'Fictional Staff'};
+    const staffFields={branch:'Preston',name:'Fictional Staff',checks:'on',training:'on',cleared:'on'};
     const staff=(await (await action(owner,'add-staff',staffFields)).json()).staff[0];
     const carerNote={...note,type:'carer',subject:staff.id,category:'Phone call'};
     assert.equal((await request('/api/diary','leader',{...carerNote,related:entry.id})).status,403);
@@ -193,6 +193,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await action(manager,'archive-person',{type:'client'},client.id)).status,403);
     assert.equal((await action('leader','archive-person',{type:'carer'},staff.id)).status,403);
     const activeVisit=(await (await action(manager,'add-visit',{client:client.id,date:reviewed,time:'16:00',minutes:'30',required:'1'})).json()).visits[0];
+    assert.equal((await action(manager,'allocate',{staff:staff.id},activeVisit.id)).status,200);
     assert.equal((await action(owner,'archive-person',{type:'client'},client.id)).status,409);
     assert.equal((await action(manager,'cancel-visit',{reason:'Fictional cancellation'},activeVisit.id)).status,200);
     assert.equal((await action(owner,'archive-person',{type:'client'},client.id)).status,200);
@@ -278,6 +279,12 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     const teamCarer=await (await request(carerProfile,'leader')).json();
     assert.ok(teamCarer.appointments.some(event=>event.id===carerEvent));
     assert.equal(teamCarer.documents.some(doc=>doc.item==='identity'),false);
+    assert.equal(teamCarer.carerChecklist.some(item=>item.key==='identity'),false);
+    assert.ok(teamCarer.carerChecklist.some(item=>item.key==='competencies'&&item.history.length));
+    assert.ok(teamCarer.roster.some(visit=>visit.date===reviewed&&visit.time==='16:00'&&visit.clientName===client.name&&visit.cancelled));
+    assert.ok(teamCarer.roster.every(visit=>visit.assignments.every(assignment=>!('note' in assignment))));
+    assert.ok(profile.roster.some(visit=>visit.date===reviewed&&visit.time==='16:00'));
+    assert.equal((await request(carerProfile,'other')).status,404);
     assert.ok((await (await request(carerProfile,owner)).json()).documents.some(doc=>doc.item==='identity'));
     assert.equal((await request(calendar,manager,{...linked,id:linkedId,version:1,subject_type:null,subject_id:null})).status,200);
     assert.equal((await (await request(clientProfile,'leader')).json()).appointments.length,0);

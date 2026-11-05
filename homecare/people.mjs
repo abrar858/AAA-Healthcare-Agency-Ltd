@@ -35,13 +35,29 @@ export function personAutomaticActions(items,person,assessments) {
   });
 }
 
+function personRoster(state,actor,person) {
+  const clients=new Map(state.clients.map(client=>[client.id,client.name]));
+  return state.visits.filter(visit=>!actor.branch||actor.branch===visit.branch)
+    .filter(visit=>person.type==='client'?visit.client===person.id&&visit.branch===person.branch:
+      visit.assignments.some(assignment=>assignment.staff===person.id))
+    .sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time))
+    .map(visit=>({
+      date:visit.date,time:visit.time,minutes:visit.minutes,required:person.type==='carer'?1:visit.required,cancelled:visit.cancelled,
+      ...(person.type==='carer'?{clientName:clients.get(visit.client)}:{}),
+      assignments:visit.assignments.filter(assignment=>person.type==='client'||assignment.staff===person.id)
+        .map(({minutes})=>({minutes}))
+    }));
+}
+
 export async function personProfile({state,actor,key,person,read,write,ownerRows,compliance,assessment,actions,diary,calendar,requireCondition}) {
   const records=personAssessmentRecords(assessment.assessmentView(state,actor),person);
   const entries=compliance.complianceProfileView(state,actor);
   const evidence=profileDocuments(entries,compliance.catalog,person);
-  const checklist=person.type==='client' ? compliance.catalog.client.map(definition=>({
-    ...definition,history:entries.filter(entry=>entry.type==='client'&&entry.subject===person.id&&entry.item===definition.key)
-  })) : undefined;
+  const profileActor=actor.role==='team_leader'?{...actor,role:'manager'}:actor;
+  const definitions=compliance.permittedCatalog(profileActor)[person.type];
+  const items=definitions.map(definition=>({
+    ...definition,history:entries.filter(entry=>entry.type===person.type&&entry.subject===person.id&&entry.item===definition.key)
+  }));
   const query=diary.diaryListQuery(state,actor,new URLSearchParams({branch:person.branch,type:person.type,subject:person.id}),requireCondition);
   const [diaryRows,appointmentRows,actionRows,manualRows,staff]=await Promise.all([
     read(query.sql,query.values),
@@ -61,7 +77,8 @@ export async function personProfile({state,actor,key,person,read,write,ownerRows
   const open=[...automatic,...manualRows.map(row=>actions.diaryAction(state,actor,row)).filter(Boolean)]
     .map(item=>actions.actionDetails(item,rows.get(item.source),owners)).filter(item=>item.status==='open')
     .sort((a,b)=>a.due.localeCompare(b.due)).map(({choices,...item})=>item);
-  return {person,documents:evidence,checklist,assessments:records,diary:diary.diaryList(diaryRows),
+  return {person,documents:evidence,...(person.type==='client'?{checklist:items}:{carerChecklist:items}),
+    roster:personRoster(state,actor,person),assessments:records,diary:diary.diaryList(diaryRows),
     appointments:appointmentRows.slice(0,30).map(row=>calendar.calendarEntry(actor,key,row)),
     moreAppointments:appointmentRows.length>30,actions:open};
 }
