@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { restoreBackup } from './restore-backup.mjs';
-import { backupTables } from './backups.mjs';
+import { backupTables, openBackup, takeBackup } from './backups.mjs';
 
 test('hosted access is scoped, identity-bound, and revocable', async () => {
   const target=mkdtempSync(join(tmpdir(),'aaa-worker-test-'));
@@ -17,7 +17,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -241,6 +241,37 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.ok(leaderOption);
     assert.equal((await request(actionPath,'leader',{source,owner:leaderOption.key,due:reviewed,status:'open',version:0})).status,200);
     assert.equal((await request(actionPath+'?source='+encodeURIComponent(source),'other')).status,404);
+    const linked={branch:'Preston',title:'Fictional linked appointment',kind:'Appointment',start_at:'2099-02-15T09:00',audience:'branch',
+      status:'scheduled',subject_type:'client',subject_id:client.id};
+    assert.equal((await request(calendar,'other',{...linked,branch:'Blackburn'})).status,403);
+    const linkedId=(await (await request(calendar,manager,linked)).json()).id;
+    assert.ok(linkedId);
+    const privateId=(await (await request(calendar,manager,{...linked,title:'Fictional private appointment',audience:'private'})).json()).id;
+    const carerEvent=(await (await request(calendar,'leader',{...linked,title:'Fictional carer appointment',subject_type:'carer',subject_id:staff.id})).json()).id;
+    const profilePath=(type,id)=>'/api/people?type='+type+'&id='+id;
+    const clientProfile=profilePath('client',client.id);
+    const carerProfile=profilePath('carer',staff.id);
+    const directory=(await (await request('/api/people','leader')).json());
+    assert.ok(directory.some(person=>person.id===client.id&&person.type==='client'));
+    assert.ok(directory.some(person=>person.id===staff.id&&person.type==='carer'));
+    assert.equal((await request(clientProfile,'other')).status,404);
+    assert.equal((await request('/api/people?branch=Blackburn','leader')).status,403);
+    const profile=await (await request(clientProfile,'leader')).json();
+    assert.equal(profile.person.patch,'Central');
+    assert.ok(profile.documents.some(doc=>doc.item==='care-plan'&&doc.files.some(pdf=>pdf.id===item.id)));
+    assert.equal(await (await request(file,'leader')).text(),atob(pdf));
+    assert.ok(profile.assessments.some(record=>record.completedAt));
+    assert.ok(profile.diary.entries.some(entryRow=>entryRow.id===entry.id));
+    assert.ok(profile.actions.some(item=>item.source===source));
+    assert.deepEqual(profile.appointments.map(event=>event.id),[linkedId]);
+    assert.ok((await (await request(clientProfile,manager)).json()).appointments.some(event=>event.id===privateId));
+    const teamCarer=await (await request(carerProfile,'leader')).json();
+    assert.ok(teamCarer.appointments.some(event=>event.id===carerEvent));
+    assert.equal(teamCarer.documents.some(doc=>doc.item==='identity'),false);
+    assert.ok((await (await request(carerProfile,owner)).json()).documents.some(doc=>doc.item==='identity'));
+    assert.equal((await request(calendar,manager,{...linked,id:linkedId,version:1,subject_type:null,subject_id:null})).status,200);
+    assert.equal((await (await request(clientProfile,'leader')).json()).appointments.length,0);
+    assert.equal((await (await request(calendar+'?history='+linkedId,manager)).json())[0].subject_id,client.id);
     const savedFollowup=(await (await request(actionPath,manager)).json()).find(item=>item.source===source);
     assert.equal(savedFollowup.ownerName,leader.label);
     assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:reviewed,status:'complete',version:savedFollowup.version})).status,200);
@@ -292,6 +323,19 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await request('/api/backups',owner,{})).status,503);
     assert.equal((await (await request('/api/backups',owner)).json()).length,1);
     assert.equal((await request(backupPath,owner)).status,200);
+    await env.BUCKET.put('compliance/'+item.id,new TextEncoder().encode(atob(pdf)));
+    const legacyEnv={...env,DB:{...env.DB,batch:async queries=>(await env.DB.batch(queries)).map((table,index)=>
+      ['aaa_calendar','aaa_calendar_history'].includes(backupTables[index])?
+        {...table,results:table.results.map(({subject_type,subject_id,...row})=>row)}:table)}};
+    const legacyBackup=await takeBackup(legacyEnv,'manual');
+    const legacyArchive=join(target,'legacy-backup.tar');
+    writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id)).arrayBuffer()));
+    const legacyTarget=join(target,'legacy-restored');
+    assert.equal(restoreBackup(legacyArchive,legacyTarget).documents,1);
+    const legacyDatabase=new DatabaseSync(join(legacyTarget,'aaa-homecare.sqlite'),{readOnly:true});
+    try {
+      assert.equal(legacyDatabase.prepare('SELECT subject_id FROM aaa_calendar WHERE id=?').get(carerEvent).subject_id,null);
+    } finally {legacyDatabase.close();}
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
     assert.equal((await request('/api/state',manager)).status,403);

@@ -115,3 +115,9 @@ export function complianceCalendar(state,actor,{branch,filter,month,today}) {
   }
   return {events,reminders};
 }
+
+// Team leaders can read operational evidence on a person page, without gaining
+// access to restricted recruitment records or checklist editing.
+export function complianceProfileView(state,actor) {
+  return complianceView(state,actor.role==='team_leader'?{...actor,role:'manager'}:actor);
+}

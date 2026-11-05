@@ -3,12 +3,13 @@ import { randomUUID } from 'node:crypto';
 const roles=['admin','manager','team_leader'];
 const types=['Appointment','Reminder','Assessment due','Compliance review','Meeting','Other'];
 const statuses=['scheduled','completed','cancelled'];
-const fields='id,owner_key,author,branch,title,kind,start_at,end_at,reminder_at,audience,carer_summary,status,notes,version,updated_by,updated_at';
+const fields='id,owner_key,author,branch,title,kind,start_at,end_at,reminder_at,audience,carer_summary,status,notes,version,updated_by,updated_at,subject_type,subject_id';
 export const calendarView=actor=>roles.includes(actor.role)?{types}:null;
 export const calendarReadSql='SELECT '+fields+' FROM aaa_calendar WHERE id=?';
-export const calendarHistorySql='SELECT version,status,title,kind,start_at,end_at,reminder_at,audience,carer_summary,notes,updated_by,updated_at FROM aaa_calendar_history WHERE event_id=? ORDER BY version DESC LIMIT 100';
-export const calendarInsertSql='INSERT INTO aaa_calendar ('+fields+') SELECT '+Array(16).fill('?').join(',');
-export const calendarUpdateSql='UPDATE aaa_calendar SET title=?,kind=?,start_at=?,end_at=?,reminder_at=?,audience=?,carer_summary=?,status=?,notes=?,version=?,updated_by=?,updated_at=? WHERE id=? AND version=?';
+export const calendarHistorySql='SELECT version,status,title,kind,start_at,end_at,reminder_at,audience,carer_summary,notes,updated_by,updated_at,subject_type,subject_id FROM aaa_calendar_history WHERE event_id=? ORDER BY version DESC LIMIT 100';
+export const calendarInsertSql='INSERT INTO aaa_calendar ('+fields+') SELECT '+Array(18).fill('?').join(',');
+export const calendarUpdateSql='UPDATE aaa_calendar SET title=?,kind=?,start_at=?,end_at=?,reminder_at=?,audience=?,carer_summary=?,status=?,notes=?,version=?,updated_by=?,updated_at=?,subject_type=?,subject_id=? WHERE id=? AND version=?';
+export const calendarPersonSql='SELECT '+fields+" FROM aaa_calendar WHERE branch=? AND subject_type=? AND subject_id=? AND (owner_key=? OR audience='branch') ORDER BY start_at DESC,id LIMIT 31";
 const inBranch=(actor,branch)=>!actor.branch||actor.branch===branch;
 export const canReadCalendar=(actor,key,row)=>Boolean(row&&calendarView(actor)&&inBranch(actor,row.branch)&&(row.owner_key===key||row.audience==='branch'));
 export const canEditCalendar=(actor,key,row)=>canReadCalendar(actor,key,row)&&(row.owner_key===key||['admin','manager'].includes(actor.role));
@@ -67,8 +68,17 @@ export function prepareCalendar(state,actor,key,body,prior,requireCondition) {
   requireCondition(title&&title.length<=160&&notes.length<=3000&&carerSummary.length<=300&&types.includes(kind)&&['private','branch'].includes(audience)&&statuses.includes(status),'Enter a valid title, category and visibility.');
   requireCondition(!carerSummary||audience==='branch','Carer sharing is available for branch events only.');
   requireCondition(validDateTime(start)&&(!end||(validDateTime(end)&&end>=start))&&(!reminder||(validDateTime(reminder)&&reminder<=start)),'Check the event time, end time and reminder time.');
+  const subjectType=(Object.hasOwn(body,'subject_type')?body.subject_type:prior?.subject_type)||null;
+  const subjectId=(Object.hasOwn(body,'subject_id')?body.subject_id:prior?.subject_id)||null;
+  requireCondition(Boolean(subjectType)===Boolean(subjectId),'Choose a linked person.');
+  if(subjectType) {
+    const people=subjectType==='client'?state.clients:subjectType==='carer'?state.staff:[];
+    const kept=prior?.subject_type===subjectType&&prior?.subject_id===subjectId;
+    requireCondition(people.some(person=>person.id===subjectId&&person.branch===branch&&(!person.archivedAt||kept)),
+      'Choose a person in this branch.',403);
+  }
   const versionNext=(prior?.version??0)+1, now=new Date().toISOString();
-  const common=[title,kind,start,end,reminder,audience,carerSummary,status,notes,versionNext,actor.label,now];
+  const common=[title,kind,start,end,reminder,audience,carerSummary,status,notes,versionNext,actor.label,now,subjectType,subjectId];
   const eventId=prior?.id??randomUUID();
   return {id:eventId,sql:prior?calendarUpdateSql:calendarInsertSql,args:prior?
     [...common,eventId,prior.version]:[eventId,key,actor.label,branch,...common]};

@@ -7,7 +7,7 @@ function response(body,status=200,headers={}) {
   }});
 }
 function publicState(state,actor) {
-  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor)};
+  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor)};
 }
 const staffRoles=['manager','team_leader','hr','rota','accounts'];
 const denied='This account has no access to the workspace.';
@@ -186,6 +186,20 @@ export default {
         });
       }
       if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      if(path==='/api/people'&&request.method==='GET') {
+        domain.requireCondition(people.peopleView(actor),'You do not have access to people profiles.',403);
+        const {state}=await workspace(env), params=new URL(request.url).searchParams;
+        const branch=params.get('branch')||actor.branch||'';
+        domain.requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
+        if(!params.has('id')) return json(people.profileDirectory(state,actor,branch));
+        const person=people.profilePerson(state,actor,params.get('type'),params.get('id'));
+        domain.requireCondition(person&&(!branch||person.branch===branch),'Person not found.',404);
+        const read=async(sql,args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
+        return json(await people.personProfile({state,actor,key:auth.calendarKey,person,read,
+          write:(sql,args)=>env.DB.prepare(sql).bind(...args).run(),
+          ownerRows:branchName=>read("SELECT email,label,role,branch FROM aaa_staff_access WHERE enabled=1 AND role IN ('manager','team_leader') AND branch=?",[branchName]),
+          compliance,assessment:assessments,actions:actionList,diary,calendar,requireCondition:domain.requireCondition}));
+      }
       if (path==='/api/actions') {
         domain.requireCondition(actionList.actionsView(actor),'You do not have access to the action list.',403);
         const {state}=await workspace(env);
@@ -313,7 +327,7 @@ export default {
       const pdfId=/^\/api\/compliance-pdf\/([a-f0-9-]{36})$/.exec(path)?.[1];
       if (request.method==='GET' && pdfId) {
         const {state}=await workspace(env);
-        const entry=compliance.complianceView(state,actor).find(item=>item.id===pdfId && item.hasPdf);
+        const entry=compliance.complianceProfileView(state,actor).find(item=>item.id===pdfId && item.hasPdf);
         const file=entry && await env.BUCKET.get('compliance/'+pdfId);
         domain.requireCondition(file,'Document not found.',404);
         return response(file.body,200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="compliance-evidence.pdf"'});

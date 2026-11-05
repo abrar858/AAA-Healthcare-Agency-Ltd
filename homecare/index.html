@@ -15,6 +15,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 .assessment-body{padding:16px 17px}.assessment-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:10px}.assessment-card{min-width:0;border:1px solid var(--line);border-radius:12px;padding:13px;display:grid;gap:7px;overflow-wrap:anywhere}.diary-card{grid-column:1/-1}.diary-meta{color:var(--muted);font-size:.85rem}.diary-note{white-space:pre-wrap;overflow-wrap:anywhere;margin:.35rem 0}.assessment-card .actions a{padding:.35rem .65rem;border:1px solid var(--line);border-radius:8px;color:var(--green);text-decoration:none;font-size:.88rem}.assessment-body .form-fields{max-width:760px}.assessment-question{min-width:0;display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:9px}.assessment-question .actions{justify-content:flex-end}.assessment-body textarea{min-height:7rem}.assessment-error{color:#a13629}.assessment-body input[type=checkbox]{width:auto}.assessment-body [hidden]{display:none!important}
 @media(max-width:620px){.assessment-body{padding:13px 12px}.assessment-body input,.assessment-body textarea,.assessment-body select{font-size:16px}.assessment-card .actions a,.assessment-body button{min-height:42px;display:inline-flex;align-items:center}}
 .calendar-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:13px}.calendar-tools select,.calendar-tools input{width:auto;max-width:100%}.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.calendar-grid button{text-align:left;min-height:58px;min-width:0;padding:5px;overflow-wrap:anywhere}.calendar-grid button[aria-pressed=true]{border:2px solid var(--green);background:#dff1e7}.calendar-grid small{display:block}.calendar-grid .weekday{text-align:center;font-size:.8rem;color:var(--muted)}.calendar-mobile{display:none}.calendar-note{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:620px){.calendar-grid{display:none}.calendar-mobile{display:block}}
+.profile-sections{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px}.profile-sections a{color:var(--green);font-weight:650;padding:7px 10px;border:1px solid var(--line);border-radius:8px}.profile-section{scroll-margin-top:12px}.profile-directory label{min-width:0}.profile-directory input[type=search]{width:min(280px,100%)}.profile-card{overflow-wrap:anywhere}.profile-card details{font-size:.88rem}.profile-card details a{display:block;margin:5px 0}
 </style>
 </head>
 <body>
@@ -38,7 +39,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
-const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records', actionList:'Branch action list', backups:'Backups & recovery' };
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records', actionList:'Branch action list', backups:'Backups & recovery', people:'People' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
@@ -97,7 +98,7 @@ const navigation = () => {
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  return [...(db.actions?['actionList']:[]),...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...(live?.backupAccess?['backups']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
+  return [...(db.actions?['actionList']:[]),...(db.people?['people']:[]),...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...(live?.backupAccess?['backups']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
 };
 let page = navigation()[0];
 let saveAction;
@@ -184,16 +185,17 @@ function staffPage(hr=false) {
     h(person.name),h(person.branch),badge(eligible(person)?'Cleared':'Not cleared',eligible(person)?'ok':'warn'),
     ...(hr?[badge(person.checks?'Complete':'Pending',person.checks?'ok':'warn'),badge(person.training?'Complete':'Pending',person.training?'ok':'warn'),button('Review onboarding','edit-staff',person.id)]:[]),
     ...(db.diary?[button('Open diary','person-diary','carer:'+person.id)]:[]),
+    ...(db.people?[button('Open profile','open-person','carer:'+person.id)]:[]),
     ...(live&&actor.role==='admin'?[button('Archive','archive-record','carer:'+person.id)]:[])
   ]);
   return hero(hr?'HR & onboarding':'Branch staff',hr?'Create staff records and review checks and training before clearing carers for allocation.':'See each carer’s home branch and eligibility for allocation.')+
     panel(hr?'Onboarding register':'Staff directory','One staff record per carer, including carers who cover other branches.',
-      table(['Name','Home branch','Eligibility',...(hr?['HR checks','Training','Action']:[]),...(db.diary?['Diary']:[]),...(live&&actor.role==='admin'?['Archive']:[])],rows),(hr||actor.role==='manager')?button('Add staff','add-staff','','primary'):'');
+      table(['Name','Home branch','Eligibility',...(hr?['HR checks','Training','Action']:[]),...(db.diary?['Diary']:[]),...(db.people?['Profile']:[]),...(live&&actor.role==='admin'?['Archive']:[])],rows),(hr||actor.role==='manager')?button('Add staff','add-staff','','primary'):'');
 }
 function clientsPage() {
   return hero('Clients & patches','Organise each branch into patches and give every client a managing branch.')+
     panel('Patches','',table(['Patch','Branch','Clients'],db.patches.filter(patch=>inScope(patch.branch)).map(patch=>[h(patch.name),h(patch.branch),String(db.clients.filter(client=>client.patch===patch.id&&!client.archivedAt).length)])),button('Add patch','add-patch','','primary'))+
-    panel('Clients','',table(['Client','Branch','Patch',...(db.diary?['Diary']:[]),...(live&&actor.role==='admin'?['Archive']:[])],db.clients.filter(client=>inScope(client.branch)&&!client.archivedAt).map(client=>[h(client.name),h(client.branch),h(db.patches.find(patch=>patch.id===client.patch)?.name),...(db.diary?[button('Open diary','person-diary','client:'+client.id)]:[]),...(live&&actor.role==='admin'?[button('Archive','archive-record','client:'+client.id)]:[])])),button('Add client','add-client','','primary'));
+    panel('Clients','',table(['Client','Branch','Patch',...(db.diary?['Diary']:[]),...(db.people?['Profile']:[]),...(live&&actor.role==='admin'?['Archive']:[])],db.clients.filter(client=>inScope(client.branch)&&!client.archivedAt).map(client=>[h(client.name),h(client.branch),h(db.patches.find(patch=>patch.id===client.patch)?.name),...(db.diary?[button('Open diary','person-diary','client:'+client.id)]:[]),...(db.people?[button('Open profile','open-person','client:'+client.id)]:[]),...(live&&actor.role==='admin'?[button('Archive','archive-record','client:'+client.id)]:[])])),button('Add client','add-client','','primary'));
 }
 function rotaPage() {
   const visits = db.visits.filter(visit=>inScope(visit.branch)).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
@@ -791,8 +793,8 @@ function calendarPage() {
       '<h2 style="margin:15px 0 8px">'+(calendarDay?'Agenda for '+h(displayDate(calendarDay)):'Month agenda')+'</h2>'+agenda+'</div>',
       db.branches.length?button('Add event','calendar-event','','primary'):'');
 }
-function calendarEditor(id) {
-  const event=id?calendarEventById(id):null;
+function calendarEditor(id,linked=null) {
+  const event=id?(page==='people'?personResult?.appointments.find(item=>item.id===id):calendarEventById(id)):null;
   ensure(!id||event,'This calendar item is unavailable.');
   if(event&&!event.canEdit) {
     pendingAction={action:'read-calendar',id};
@@ -802,10 +804,11 @@ function calendarEditor(id) {
   }
   pendingAction={action:'save-calendar',id};
   const branches=db.branches.filter(inScope).map(branch=>[branch,branch]);
-  const date=calendarDay||(calendarMonth===today.slice(0,7)?today:calendarMonth+'-01');
+  const date=linked?today:calendarDay||(calendarMonth===today.slice(0,7)?today:calendarMonth+'-01');
   showEditor(event?'Edit calendar event':'Add calendar event',
     hiddenField('id',event?.id??'')+hiddenField('version',event?.version??0)+
     (event?hiddenField('branch',event.branch)+'<p class="muted">'+h(event.branch)+'</p>':select('Branch','branch',branches))+
+    '<label>Linked person (optional)<select name="calendar_person"></select></label>'+
     field('Title','title','maxlength="160" required',event?.title)+select('Type','kind',db.calendar.types.map(kind=>[kind,kind]))+
     field('Starts','start_at','type="datetime-local" required',event?.start_at??date+'T09:00')+
     field('Ends (optional)','end_at','type="datetime-local"',event?.end_at)+
@@ -817,6 +820,19 @@ function calendarEditor(id) {
     select('Status','status',calendarStatuses)+'<label>Notes<textarea name="notes" maxlength="3000">'+h(event?.notes)+'</textarea></label>',
     ()=>{},'Save event');
   const fields=$('#editor-fields'), audience=fields.querySelector('[name="audience"]');
+  const branchPicker=fields.querySelector('[name="branch"]'), personPicker=fields.querySelector('[name="calendar_person"]');
+  if(linked&&!event) branchPicker.value=linked.branch;
+  const initial=event?.subject_id?event.subject_type+':'+event.subject_id:linked?linked.type+':'+linked.id:'';
+  const updatePeople=(selected='')=>{
+    const branch=branchPicker.value;
+    const people=[...db.clients.map(person=>({...person,type:'client'})),...db.staff.map(person=>({...person,type:'carer'}))];
+    personPicker.innerHTML=opts([['','No linked person'],...people.filter(person=>person.branch===branch&&(!person.archivedAt||person.type+':'+person.id===initial))
+      .map(person=>[person.type+':'+person.id,person.name+' · '+(person.type==='client'?'Client':'Carer')])]);
+    personPicker.value=selected;
+    if(personPicker.selectedIndex<0) personPicker.value='';
+  };
+  branchPicker.addEventListener('change',()=>updatePeople());
+  updatePeople(initial);
   fields.querySelector('[name="kind"]').value=event?.kind??'Appointment';
   fields.querySelector('[name="status"]').value=event?.status??'scheduled';
   audience.value=event?.audience??'private';
@@ -1022,6 +1038,89 @@ function backupsPage() {
       body,backupLoading?'':button('Create backup','create-backup','','primary'));
 }
 
+
+let personKey='',personResult=null,personLoading=false,personError='',personRequest=0;
+let peopleFilters={type:'',search:''};
+const personType=type=>type==='client'?'Client':'Carer';
+const sourceLink=(source,label='Open source')=>'<a href="/?source='+encodeURIComponent(source)+'">'+h(label)+'</a>';
+async function openPerson(key) {
+  const [type,id]=key.split(':');
+  if(!db.people||!['client','carer'].includes(type)||!id) return;
+  const request=++personRequest;
+  page='people';personKey=key;personResult=null;personLoading=true;personError='';notice('');render();
+  try {
+    const response=await fetch('/api/people?'+new URLSearchParams({type,id,branch:scope==='All branches'?'':scope}));
+    if(response.status===401) location.assign(live?.site?'/signin-with-chatgpt?return_to=%2F':'/login');
+    const data=await response.json();
+    if(!response.ok) throw new Error(data.error);
+    if(request===personRequest) personResult=data;
+  } catch(error) {if(request===personRequest) personError=error.message;}
+  finally {
+    if(request===personRequest) {personLoading=false;if(page==='people') render();}
+  }
+}
+function backToPeople() {++personRequest;personKey='';personResult=null;personLoading=false;personError='';notice('');render();}
+function peoplePage() {
+  const grid=(rows,empty)=>rows.length?'<div class="assessment-grid">'+rows.join('')+'</div>':'<p class="muted">'+h(empty)+'</p>';
+  const card=(title,details,controls='')=>'<article class="assessment-card profile-card"><strong>'+h(title)+'</strong>'+details+controls+'</article>';
+  const back=button('Back to people','people-directory');
+  if(personLoading||personError) return hero('Person profile','Find the information you need in one place.')+
+    panel('Profile','',personLoading?'<p class="empty" role="status">Loading profile…</p>':'<p class="empty assessment-error" role="alert">'+h(personError)+'</p>',back);
+  if(!personResult) {
+    const search=peopleFilters.search.trim().toLocaleLowerCase('en-GB');
+    const people=[...db.clients.map(person=>({...person,type:'client'})),...db.staff.map(person=>({...person,type:'carer'}))]
+      .filter(person=>!person.archivedAt&&inScope(person.branch)&&(!peopleFilters.type||person.type===peopleFilters.type)&&
+        (!search||(person.name+' '+person.branch).toLocaleLowerCase('en-GB').includes(search)))
+      .sort((a,b)=>a.name.localeCompare(b.name,'en-GB'));
+    return hero('People','Open a client or carer to see their documents, assessments, diary, appointments and actions.')+
+      panel('Find a person','', '<form id="people-filter" class="register-filters profile-directory">'+
+        field('Name or branch','search','type="search" maxlength="100"',peopleFilters.search)+
+        '<label>Type<select name="type">'+diaryOptions([['','Clients and carers'],['client','Clients'],['carer','Carers']],peopleFilters.type)+'</select></label>'+
+        '<button type="submit">Search</button></form><div class="assessment-body">'+
+        grid(people.map(person=>card(person.name,'<small>'+h(personType(person.type)+' · '+person.branch)+'</small>',
+          actions(button('Open profile','open-person',person.type+':'+person.id)))),'No people match this search.')+'</div>');
+  }
+  const {person,documents,assessments,diary,appointments,moreAppointments,actions:items}=personResult;
+  const key=person.type+':'+person.id;
+  const sections=[['documents','Documents'],['assessments','Assessments'],['diary','Diary'],['appointments','Appointments'],['actions','Open actions']];
+  const section=(key,title,description,contents,control='')=>'<section class="profile-section" id="person-'+key+'">'+panel(title,description,'<div class="assessment-body">'+contents+'</div>',control)+'</section>';
+  const docCards=documents.map(doc=>{
+    const latest=doc.files[0];
+    const previous=doc.files.slice(1).map(file=>'<a href="/api/compliance-pdf/'+h(file.id)+'">PDF reviewed '+h(displayDate(file.reviewed))+'</a>').join('');
+    return card(doc.label,'<small>'+h(doc.status==='recorded'?'Recorded':doc.status==='not-applicable'?'Not applicable':'Missing')+
+      (doc.due?' · Next review '+h(displayDate(doc.due)):'')+'</small>'+
+      (doc.reference?'<p class="diary-note">'+h(doc.reference)+'</p>':''),
+      actions(latest?'<a href="/api/compliance-pdf/'+h(latest.id)+'">Download PDF · '+h(displayDate(latest.reviewed))+'</a>':'',
+        live.catalog[person.type].some(item=>item.key===doc.item)&&!person.archived?sourceLink('compliance:'+key+':'+doc.item,'Open checklist item'):'')+
+      (previous?'<details><summary>Earlier PDFs</summary>'+previous+'</details>':''));
+  });
+  const formCards=assessments.map(record=>card(record.title,'<small>'+h(displayDate(record.date)+' · '+record.by)+'</small><div>'+
+    badge(record.completedAt?'Completed':'Draft',record.completedAt?'ok':'warn')+'</div>',
+    actions(record.completedAt?'<a href="/api/assessment-document/'+h(record.id)+'?view=1">View assessment</a>':
+      sourceLink('assessment:'+record.id,'Open assessment'))));
+  const diaryCards=diary.entries.map(entry=>card(entry.category,'<small>'+h(displayDate(entry.occurred_date)+(entry.occurred_time?' · '+entry.occurred_time:'')+' · '+entry.author)+'</small>'+
+    '<p class="diary-note">'+h(entry.note)+'</p>',actions(sourceLink('diary:'+entry.id,'Open diary entry'))));
+  const appointmentCards=appointments.map(event=>card(event.title,'<small>'+h(calendarTime(event.start_at)+' · '+event.kind)+'</small><div>'+
+    badge(event.audience==='private'?'Personal':'Branch shared')+' '+badge(calendarStatuses.find(([key])=>key===event.status)?.[1])+'</div>',
+    actions(button(event.canEdit?'Open / edit':'View','profile-appointment',event.id))));
+  const actionCards=items.map(item=>card(item.title,'<small>'+h(item.category+' · Due '+displayDate(item.due))+'</small><small>Owner: '+h(item.ownerName)+'</small>',
+    actions(sourceLink(item.source))));
+  return hero(person.name,personType(person.type)+' · '+person.branch+(person.patch?' · '+person.patch:'')+(person.archived?' · Archived':''))+
+    '<nav aria-label="Profile sections" class="profile-sections">'+back+sections.map(([id,label])=>'<a href="#person-'+id+'">'+h(label)+'</a>').join('')+'</nav>'+
+    section('documents','Documents','Evidence and review dates you have permission to view.',grid(docCards,'No evidence recorded.'))+
+    section('assessments','Assessments','Drafts and completed assessments.',grid(formCards,'No assessments recorded.'))+
+    section('diary','Diary',diary.hasNext?'Most recent 15 entries. Open the diary to see earlier entries.':'Recent diary entries.',
+      grid(diaryCards,'No diary entries.'),button('Open diary','person-diary',key))+
+    section('appointments','Appointments',moreAppointments?'Showing the latest 30 linked events.':'Calendar events linked to this person.',
+      grid(appointmentCards,'No appointments are linked yet.'),!person.archived?button('Add appointment','profile-appointment'):'')+
+    section('actions','Open actions','Outstanding work linked to this person.',grid(actionCards,'No open actions you have access to.'));
+}
+$('#view').addEventListener('submit',event=>{
+  if(event.target.id!=='people-filter') return;
+  event.preventDefault();
+  peopleFilters=Object.fromEntries(new FormData(event.target));render();
+});
+
 function render() {
   if (!live) {
     $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
@@ -1033,7 +1132,7 @@ function render() {
   $('#nav').innerHTML = navigation().map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage,actionList:actionListPage,backups:backupsPage
+    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage,actionList:actionListPage,backups:backupsPage,people:peoplePage
   }[page]();
 }
 
@@ -1181,10 +1280,10 @@ $('#role').addEventListener('change',event=>{
   notice('');
   render();
 });
-$('#branch').addEventListener('change',event=>{scope=event.target.value;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;actionFilters.owner='';actionFilters.page=0;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else render();});
+$('#branch').addEventListener('change',event=>{scope=event.target.value;personResult=null;personKey='';personLoading=false;personError='';++personRequest;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;actionFilters.owner='';actionFilters.page=0;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else render();});
 $('#nav').addEventListener('click',event=>{
   const target=event.target.closest('[data-page]');
-  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else render();}
+  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;if(page==='people') {personKey='';personResult=null;personLoading=false;personError='';++personRequest;}notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else render();}
 });
 $('#editor-cancel').addEventListener('click',()=>$('#editor').close());
 async function sendAction(action, id, fields = {}) {
@@ -1207,7 +1306,7 @@ async function sendAction(action, id, fields = {}) {
     } else if (calendarAction) {
       calendarMonth=fields.start_at.slice(0,7);
       calendarDay='';
-      await loadCalendar();
+      if(page==='people'&&personKey) await openPerson(personKey); else await loadCalendar();
     } else if (diaryAction) {
       diaryFilters={type:fields.type,subject:fields.subject,category:'',page:0};
       await loadDiary();
@@ -1228,6 +1327,12 @@ $('#editor-form').addEventListener('submit',async event=>{
   try {
     if (live && !['visit-record','compliance-history','read-diary','read-calendar','read-assessment-source'].includes(pendingAction?.action)) {
       const values = Object.fromEntries(fields);
+      if (pendingAction.action==='save-calendar') {
+        const [type,id]=String(values.calendar_person??'').split(':');
+        values.subject_type=type||null;
+        values.subject_id=id||null;
+        delete values.calendar_person;
+      }
       if (pendingAction.action==='save-compliance') {
         const file = values.pdf;
         delete values.pdf;
@@ -1251,6 +1356,7 @@ $('#view').addEventListener('click',async event=>{
   const visit=visitById(id);
   try {
     const handlers={
+      'open-person':()=>openPerson(id), 'people-directory':backToPeople, 'profile-appointment':()=>calendarEditor(id,personResult?.person),
       'create-backup':createBackupNow,
       'edit-action-item':()=>editExistingAction(id), 'diary-action-item':()=>editDiaryAction(id),
       'action-list-page':()=>moveActionPage(id),
@@ -1288,8 +1394,10 @@ if (live) {
 }
 render();
 if(live) {
-  const source=new URLSearchParams(location.search).get('source');
-  if(source) void openActionSource(source).catch(error=>notice(error.message,true));
+  const params=new URLSearchParams(location.search);
+  const source=params.get('source'), person=params.get('person');
+  if(person&&db.people) void openPerson(person);
+  else if(source) void openActionSource(source).catch(error=>notice(error.message,true));
   else if(page==='actionList') void loadActionList();
 }
 </script>

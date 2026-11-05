@@ -5,7 +5,9 @@ import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { complianceView, permittedCatalog, recordCompliance, complianceCalendar } from './compliance.mjs';
+import { complianceView, permittedCatalog, recordCompliance, complianceCalendar, complianceProfileView } from './compliance.mjs';
+import * as compliance from './compliance.mjs';
+import * as people from './people.mjs';
 import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
 import * as actionList from './actions.mjs';
 import * as calendar from './calendar.mjs';
@@ -36,9 +38,16 @@ db.exec(`
 db.exec(readFileSync(new URL('./sites/drizzle/0003_aaa_diary.sql',import.meta.url),'utf8'));
 db.exec(readFileSync(new URL('./sites/drizzle/0004_aaa_calendar.sql',import.meta.url),'utf8'));
 db.exec(readFileSync(new URL('./sites/drizzle/0005_aaa_actions.sql',import.meta.url),'utf8'));
+if(!db.prepare("PRAGMA table_info('aaa_calendar')").all().some(column=>column.name==='subject_type')) {
+  db.exec('BEGIN');
+  try {
+    db.exec(readFileSync(new URL('./sites/drizzle/0006_aaa_person_appointments.sql',import.meta.url),'utf8'));
+    db.exec('COMMIT');
+  } catch(error) {db.exec('ROLLBACK');throw error;}
+}
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
-const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor)});
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -218,6 +227,20 @@ function startServer() {
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
       if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      if(path==='/api/people'&&req.method==='GET') {
+        requireCondition(people.peopleView(actor),'You do not have access to people profiles.',403);
+        const state=readState(), params=new URL(req.url,origin).searchParams;
+        const branch=params.get('branch')||actor.branch||'';
+        requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
+        if(!params.has('id')) return json(res,200,people.profileDirectory(state,actor,branch));
+        const person=people.profilePerson(state,actor,params.get('type'),params.get('id'));
+        requireCondition(person&&(!branch||person.branch===branch),'Person not found.',404);
+        const read=(sql,args)=>db.prepare(sql).all(...args);
+        return json(res,200,await people.personProfile({state,actor,key:user.email,person,read,
+          write:(sql,args)=>db.prepare(sql).run(...args),
+          ownerRows:branchName=>read("SELECT email,label,role,branch FROM users WHERE enabled=1 AND role IN ('manager','team_leader') AND branch=?",[branchName]),
+          compliance,assessment:{assessmentView},actions:actionList,diary,calendar,requireCondition}));
+      }
       if (path==='/api/actions') {
         requireCondition(actionList.actionsView(actor),'You do not have access to the action list.',403);
         const params=new URL(req.url,origin).searchParams;
@@ -330,7 +353,7 @@ function startServer() {
       }
       const pdfId = /^\/api\/compliance-pdf\/([a-f0-9-]{36})$/.exec(path)?.[1];
       if (req.method === 'GET' && pdfId) {
-        const entry = complianceView(readState(),actor).find(item=>item.id===pdfId && item.hasPdf);
+        const entry = complianceProfileView(readState(),actor).find(item=>item.id===pdfId && item.hasPdf);
         const file = entry && db.prepare('SELECT body FROM compliance_pdfs WHERE id=?').get(pdfId);
         requireCondition(file,'Document not found.',404);
         res.setHeader('Content-Disposition','attachment; filename="compliance-evidence.pdf"');

@@ -73,14 +73,16 @@ export function restoreBackup(archive,destination) {
     const dbPath=join(output,'aaa-homecare.sqlite');
     writeFileSync(dbPath,'',{mode:0o600,flag:'wx'});
     db=new DatabaseSync(dbPath);
-    for(const file of readdirSync(migrations).filter(name=>/^000[0-5]_.*\.sql$/.test(name)).sort()) db.exec(readFileSync(join(migrations,file),'utf8'));
+    for(const file of readdirSync(migrations).filter(name=>/^000[0-6]_.*\.sql$/.test(name)).sort()) db.exec(readFileSync(join(migrations,file),'utf8'));
     db.exec('BEGIN; PRAGMA defer_foreign_keys=ON; DELETE FROM aaa_workspace;');
     for(const name of backupTables) {
       const columns=db.prepare('PRAGMA table_info('+name+')').all().map(column=>column.name);
       const insert=db.prepare('INSERT INTO '+name+' ('+columns.join(',')+') VALUES ('+columns.map(()=>'?').join(',')+')');
       for(const row of snapshot[name]) {
-        requireBackup(row&&Object.keys(row).length===columns.length&&columns.every(column=>Object.hasOwn(row,column)),'Database columns do not match the recovery schema.');
-        insert.run(...columns.map(column=>row[column]));
+        const added=(name==='aaa_calendar'||name==='aaa_calendar_history')?['subject_type','subject_id']:[];
+        requireBackup(row&&Object.keys(row).every(column=>columns.includes(column))&&columns.every(column=>Object.hasOwn(row,column)||added.includes(column)),
+          'Database columns do not match the recovery schema.');
+        insert.run(...columns.map(column=>row[column]??null));
       }
     }
     db.exec('COMMIT;');

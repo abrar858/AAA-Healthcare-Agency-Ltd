@@ -99,3 +99,8 @@ The private backup job at `POST /api/backup-job` accepts the current Sites servi
 ### Compliance dates in the calendar
 
 The calendar shows the latest due date for every active compliance item the viewer is allowed to read. These entries appear under the combined or branch calendar views, are marked **From compliance**, and link to the checklist item. Change or clear the date in that item to move or remove the entry automatically. Reviews due today or earlier also appear in **Reminders due**. These are in-portal reminders.
+
+
+### Client and carer profiles
+
+Open **People** on a phone or desktop, search by name or branch, and choose **Open profile**. Documents, assessments, diary entries, appointments and open actions are grouped on one page. Team leaders can read operational compliance evidence for their own branch through these profiles; checklist editing and restricted recruitment evidence keep their existing permissions. Personal calendar events remain visible to their creator. When creating or editing a calendar appointment, select **Linked person** to show it on that profile. Older appointments are not linked automatically.
