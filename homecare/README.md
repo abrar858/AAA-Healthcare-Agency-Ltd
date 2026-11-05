@@ -44,3 +44,9 @@ Attach a PDF of up to 5 MB or enter a reference to a document in the organisatio
 The included checklist is a starting point for AAA to confirm against its policies, commissioner instructions, each care package and staff role. Review intervals are entered per item. The register tracks MAR evidence and its review. It does not provide a live medication administration workflow. Use references to existing records where the original is in another format.
 
 Run the HTTP integration checks with `node --test homecare/server.test.mjs`.
+
+### Hosted Sites edition
+
+The hosted edition uses the same compliance and branch rules and runs behind Sites sign-in. Its first release is owner-only. Hosting configuration sets `AAA_OWNER_EMAIL` as a secret and `AAA_ORIGIN` to the exact deployed origin. The app denies any other signed-in identity. It stores the workspace in D1 and evidence files in a private R2 binding. The hosted edition has a 1 MB workspace metadata limit for the initial rollout. PDFs are stored separately. The Node password-provisioning commands above apply to the Node edition only.
+
+The Sites checkout uses a Worker manifest with `d1: "DB"` and `r2: "BUCKET"`, and the migration files in `homecare/sites/drizzle` at the checkout root under `drizzle/`. From that checkout, run `node homecare/sites/build.mjs .` before packaging.
