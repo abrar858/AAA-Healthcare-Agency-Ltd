@@ -38,7 +38,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
-const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records' };
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records', actionList:'Branch action list' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
@@ -97,7 +97,7 @@ const navigation = () => {
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  return [...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
+  return [...(db.actions?['actionList']:[]),...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
 };
 let page = navigation()[0];
 let saveAction;
@@ -653,7 +653,7 @@ function diaryPage() {
       '<article class="assessment-card diary-card"><strong>'+h(entry.person+' · '+entry.branch)+'</strong>'+
       '<div>'+badge(entry.category)+' <span class="diary-meta">Event: '+h(displayDate(entry.occurred_date)+(entry.occurred_time?' at '+entry.occurred_time:''))+'</span></div>'+
       '<p class="diary-note">'+h(entry.note)+'</p><small class="diary-meta">Logged by '+h(entry.author)+' · '+h(diaryTimestamp(entry.created_at))+'</small>'+
-      actions(entry.related&&button('View original','read-diary',entry.related),diaryPeople(entry.type).some(person=>person.id===entry.subject&&!person.archivedAt)&&button('Add follow-up','diary-follow-up',entry.id))+'</article>').join('')+'</div>':
+      actions(entry.related&&button('View original','read-diary',entry.related),db.actions&&button('Create follow-up action','diary-action-item',entry.id),diaryPeople(entry.type).some(person=>person.id===entry.subject&&!person.archivedAt)&&button('Add follow-up','diary-follow-up',entry.id))+'</article>').join('')+'</div>':
       '<p class="muted">No diary entries match these filters.</p>';
   return hero('Diary','Record calls, visit changes and follow-ups for clients and carers.')+
     panel('Branch diary','Entries are kept in date order. Add a follow-up or correction to a saved entry.',filter+
@@ -869,6 +869,115 @@ function restoreTemplateEditor(id) {
   showEditor('Restore '+template.title,'<p>This form will be available for new assessments again.</p>',()=>{},'Restore form');
 }
 
+
+let actionItems=[], actionLoading=false, actionError='', actionRequest=0;
+let actionFilters={category:'',owner:'',status:'open',page:0};
+const actionPageSize=15;
+const actionCategories=['Overdue review','Missing evidence','Expiring competency','Unfinished assessment','Diary follow-up'];
+async function fetchActions(params) {
+  const response=await fetch('/api/actions?'+new URLSearchParams(params));
+  if(response.status===401) location.assign(live?.site?'/signin-with-chatgpt?return_to=%2F':'/login');
+  const result=await response.json();
+  if(!response.ok) throw new Error(result.error);
+  return result;
+}
+async function loadActionList() {
+  const request=++actionRequest;
+  actionLoading=true;actionError='';render();
+  try {
+    const result=await fetchActions({branch:scope==='All branches'?'':scope});
+    if(request===actionRequest) actionItems=result;
+  } catch(error) {
+    if(request===actionRequest) actionError=error.message;
+  } finally {
+    if(request===actionRequest) {
+      actionLoading=false;
+      if(page==='actionList') render();
+    }
+  }
+}
+function actionListPage() {
+  const open=actionItems.filter(item=>item.status==='open');
+  const choices=new Map(actionItems.map(item=>[item.owner,item.ownerName]));
+  const visible=actionItems.filter(item=>(!actionFilters.category||item.category===actionFilters.category)&&
+    (!actionFilters.owner||item.owner===actionFilters.owner)&&item.status===actionFilters.status)
+    .sort((a,b)=>a.due.localeCompare(b.due)||a.person.localeCompare(b.person));
+  const maxPage=Math.max(0,Math.ceil(visible.length/actionPageSize)-1);
+  actionFilters.page=Math.max(0,Math.min(maxPage,actionFilters.page));
+  const offset=actionFilters.page*actionPageSize;
+  const picker=(label,name,values)=>'<label>'+h(label)+'<select name="'+name+'">'+diaryOptions(values,actionFilters[name])+'</select></label>';
+  const filter='<form class="register-filters" id="action-filters">'+picker('Category','category',[['','All categories'],...actionCategories.map(label=>[label,label])])+
+    picker('Owner','owner',[['','All owners'],...choices])+picker('Status','status',[['open','Open'],['complete','Completed diary actions']])+
+    '<button type="submit">Apply filters</button></form>';
+  const cards=actionLoading?'<p role="status">Loading actions…</p>':actionError?'<p role="alert" class="assessment-error">'+h(actionError)+'</p>':
+    visible.length?'<div class="assessment-grid">'+visible.slice(offset,offset+actionPageSize).map(item=>
+      '<article class="assessment-card"><strong>'+h(item.title)+'</strong><span>'+h(item.person+' · '+item.branch)+'</span>'+
+      '<div>'+badge(item.category)+' '+(item.status==='open'&&item.due<today?badge('Overdue','bad'):'')+'</div>'+
+      '<small>Owner: '+h(item.ownerName)+(item.ownerUnavailable?' · previous owner unavailable':'')+'</small><small>Due: '+h(displayDate(item.due))+(item.sourceDue&&item.sourceDue!==item.due?' · source date '+h(displayDate(item.sourceDue)):'')+'</small>'+
+      actions('<a href="/?source='+encodeURIComponent(item.source)+'">Open source</a>',button('Edit action','edit-action-item',item.source))+'</article>').join('')+'</div>':
+      '<p class="muted">No actions match this selection.</p>';
+  return hero('Branch action list','See what needs attention, who owns it and when it is due.')+
+    (actionLoading||actionError?'':'<div class="cards">'+metric('Open actions',open.length,'In this workspace')+
+      metric('Overdue',open.filter(item=>item.due<today).length,'Due before today')+
+      metric('Due today',open.filter(item=>item.due===today).length,'Due on today’s date')+'</div>')+
+    panel('Actions','Automatic actions close when their source record is resolved. Complete diary follow-ups here.',filter+
+      '<div class="assessment-body">'+cards+'</div>'+(!actionLoading&&!actionError&&visible.length?
+        '<div class="register-pages"><span>Showing '+(offset+1)+'–'+Math.min(offset+actionPageSize,visible.length)+' of '+visible.length+'</span>'+
+        actions(actionFilters.page>0&&button('Previous','action-list-page',actionFilters.page-1),actionFilters.page<maxPage&&button('Next','action-list-page',actionFilters.page+1))+'</div>':''));
+}
+function moveActionPage(pageNumber) {actionFilters.page=Number(pageNumber)||0;render();}
+function actionItemEditor(item) {
+  pendingAction={action:'save-action-item',id:''};
+  const isDiary=item.source.startsWith('diary:');
+  showEditor('Action · '+item.title,hiddenField('source',item.source)+hiddenField('version',item.version)+
+    '<p class="muted">'+h(item.person+' · '+item.branch)+'</p>'+
+    select('Owner','owner',item.choices.map(choice=>[choice.key,choice.label]))+
+    field('Due date','due','type="date" required',item.due)+
+    (isDiary?select('Status','status',[['open','Open'],['complete','Completed']]):hiddenField('status','open')),
+    ()=>{},'Save action');
+  const form=$('#editor-fields');
+  form.querySelector('[name="owner"]').value=item.owner;
+  form.querySelector('[name="status"]').value=item.status;
+}
+function editExistingAction(source) {
+  const item=actionItems.find(item=>item.source===source);
+  if(item) actionItemEditor(item);
+}
+async function editDiaryAction(id) {
+  const item=await fetchActions({source:'diary:'+id});
+  if(page==='diary') actionItemEditor(item);
+}
+async function openActionSource(source) {
+  const [kind,first,second,third]=source.split(':');
+  if(kind==='diary'&&db.diary) {
+    page='diary';void loadDiary();
+    await viewDiaryEntry(first);
+  } else if(kind==='assessment'&&db.assessment) {
+    const record=db.assessment.records.find(item=>item.id===first);
+    ensure(record,'This assessment is unavailable.');
+    page='assessments';
+    if(db.assessment.canComplete&&!record.completedAt) openAssessmentDraft(first);
+    else {
+      render();
+      pendingAction={action:'read-assessment-source',id:first};
+      showEditor(record.template.title,'<p class="muted">'+h(record.subjectName+' · '+record.branch)+'</p>'+
+        record.template.questions.map((item,index)=>'<p><strong>'+h(item.label)+'</strong></p><p class="diary-note">'+h(record.answers[index]||'—')+'</p>').join(''),()=>{},'Done');
+    }
+  } else if(kind==='compliance'&&['client','carer'].includes(first)&&live.catalog[first].length) {
+    page=first==='client'?'clientCompliance':'carerCompliance';
+    complianceFilters[first]={...blankComplianceFilters(),subject:second};
+    render();
+    pendingAction={action:'save-compliance',id:first+':'+second+':'+third};
+    complianceEditor(pendingAction.id);
+  } else throw new Error('This source is unavailable.');
+}
+$('#view').addEventListener('submit',event=>{
+  if(event.target.id!=='action-filters') return;
+  event.preventDefault();
+  actionFilters={...Object.fromEntries(new FormData(event.target)),page:0};
+  render();
+});
+
 function render() {
   if (!live) {
     $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
@@ -880,7 +989,7 @@ function render() {
   $('#nav').innerHTML = navigation().map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage
+    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage,actionList:actionListPage
   }[page]();
 }
 
@@ -1028,10 +1137,10 @@ $('#role').addEventListener('change',event=>{
   notice('');
   render();
 });
-$('#branch').addEventListener('change',event=>{scope=event.target.value;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else render();});
+$('#branch').addEventListener('change',event=>{scope=event.target.value;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;actionFilters.owner='';actionFilters.page=0;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else render();});
 $('#nav').addEventListener('click',event=>{
   const target=event.target.closest('[data-page]');
-  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else render();}
+  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;notice('');if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else render();}
 });
 $('#editor-cancel').addEventListener('click',()=>$('#editor').close());
 async function sendAction(action, id, fields = {}) {
@@ -1042,13 +1151,16 @@ async function sendAction(action, id, fields = {}) {
     const accessAction = ['save-access','revoke-access'].includes(action);
     const diaryAction = action==='add-diary';
     const calendarAction = action==='save-calendar';
-    const endpoint = calendarAction?'/api/calendar':diaryAction?'/api/diary':accessAction?'/api/access':action==='save-compliance'?'/api/compliance':'/api/action';
+    const actionEdit = action==='save-action-item';
+    const endpoint = actionEdit?'/api/actions':calendarAction?'/api/calendar':diaryAction?'/api/diary':accessAction?'/api/access':action==='save-compliance'?'/api/compliance':'/api/action';
     const response = await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(diaryAction||calendarAction?fields:{action,id,fields})});
+      body:JSON.stringify(diaryAction||calendarAction||actionEdit?fields:{action,id,fields})});
     if (response.status===401) {location.assign(live?.site?'/signin-with-chatgpt?return_to=%2F':'/login');return false;}
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
-    if (calendarAction) {
+    if (actionEdit) {
+      if(page==='actionList') await loadActionList();
+    } else if (calendarAction) {
       calendarMonth=fields.start_at.slice(0,7);
       calendarDay='';
       await loadCalendar();
@@ -1070,7 +1182,7 @@ $('#editor-form').addEventListener('submit',async event=>{
   event.preventDefault();
   const fields = new FormData(event.target);
   try {
-    if (live && !['visit-record','compliance-history','read-diary','read-calendar'].includes(pendingAction?.action)) {
+    if (live && !['visit-record','compliance-history','read-diary','read-calendar','read-assessment-source'].includes(pendingAction?.action)) {
       const values = Object.fromEntries(fields);
       if (pendingAction.action==='save-compliance') {
         const file = values.pdf;
@@ -1095,6 +1207,8 @@ $('#view').addEventListener('click',async event=>{
   const visit=visitById(id);
   try {
     const handlers={
+      'edit-action-item':()=>editExistingAction(id), 'diary-action-item':()=>editDiaryAction(id),
+      'action-list-page':()=>moveActionPage(id),
       'archive-record':()=>personArchiveEditor(id,false), 'restore-record':()=>personArchiveEditor(id,true),
       'restore-template':()=>restoreTemplateEditor(id),
       'calendar-month':()=>moveCalendar(id), 'calendar-day':()=>openCalendarDay(id),
@@ -1127,6 +1241,11 @@ if (live) {
   $('#mode-note').textContent = 'AAA Homecare workspace';
 }
 render();
+if(live) {
+  const source=new URLSearchParams(location.search).get('source');
+  if(source) void openActionSource(source).catch(error=>notice(error.message,true));
+  else if(page==='actionList') void loadActionList();
+}
 </script>
 </body>
 </html>

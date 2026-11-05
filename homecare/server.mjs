@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { complianceView, permittedCatalog, recordCompliance } from './compliance.mjs';
 import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
+import * as actionList from './actions.mjs';
 import * as calendar from './calendar.mjs';
 import * as diary from './diary.mjs';
 import { initialState, roles, applyAction, project, AppError, requireCondition } from './domain.mjs';
@@ -34,9 +35,10 @@ db.exec(`
 `);
 db.exec(readFileSync(new URL('./sites/drizzle/0003_aaa_diary.sql',import.meta.url),'utf8'));
 db.exec(readFileSync(new URL('./sites/drizzle/0004_aaa_calendar.sql',import.meta.url),'utf8'));
+db.exec(readFileSync(new URL('./sites/drizzle/0005_aaa_actions.sql',import.meta.url),'utf8'));
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
-const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor)});
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -216,6 +218,54 @@ function startServer() {
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
       if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      if (path==='/api/actions') {
+        requireCondition(actionList.actionsView(actor),'You do not have access to the action list.',403);
+        const params=new URL(req.url,origin).searchParams;
+        const branch=params.get('branch')||actor.branch||'';
+        let fields;
+        if(req.method==='POST') {
+          requireCondition((req.headers['content-type']??'').split(';')[0]==='application/json','Use JSON for this request.',415);
+          try {fields=JSON.parse(await readBody(req,12000));}
+          catch(error) {if(error instanceof AppError) throw error; throw new AppError(400,'Invalid JSON request.');}
+          requireCondition(fields && typeof fields.source==='string' && fields.source.length<240,'Invalid action.');
+        }
+        const state=readState();
+        requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
+        const args=branch?[branch]:[];
+        const people=db.prepare("SELECT email,label,role,branch FROM users WHERE enabled=1 AND role IN ('manager','team_leader')"+(branch?' AND branch=?':'')).all(...args);
+        const owners=await actionList.ownerAliases(people);
+        const current=userOf(req);
+        requireCondition(current,'Sign in to continue.',401);
+        const currentActor=actorOf(current);
+        const automatic=()=>actionList.automaticActions(state,currentActor,permittedCatalog(currentActor),branch);
+        if(req.method==='GET') {
+          const source=params.get('source');
+          if(source) {
+            requireCondition(source.startsWith('diary:'),'Invalid diary follow-up.');
+            const item=actionList.diaryAction(state,currentActor,db.prepare(diary.diaryEntrySql).get(source.slice(6)));
+            requireCondition(item&&(!branch||item.branch===branch),'This action is unavailable.',404);
+            return json(res,200,actionList.actionDetails(item,db.prepare(actionList.actionRowSql).get(source),owners));
+          }
+          const auto=automatic(), lookup=db.prepare(actionList.actionRowsSql+(branch?' WHERE branch=?':''));
+          const rows=new Map(lookup.all(...args).map(item=>[item.source,item]));
+          const defaults=auto.filter(item=>!item.due&&!rows.has(item.source)).map(actionList.defaultAction);
+          if(defaults.length) {
+            db.prepare(actionList.seedMissingSql).run(new Date().toISOString(),JSON.stringify(defaults));
+            for(const row of lookup.all(...args)) rows.set(row.source,row);
+          }
+          const manual=db.prepare(actionList.diaryRowsSql+(branch?' WHERE d.branch=?':'')).all(...args).map(row=>actionList.diaryAction(state,currentActor,row)).filter(Boolean);
+          return json(res,200,[...auto,...manual].map(item=>actionList.actionDetails(item,rows.get(item.source),owners)));
+        }
+        if(req.method==='POST') {
+          const item=fields.source.startsWith('diary:')?actionList.diaryAction(state,currentActor,db.prepare(diary.diaryEntrySql).get(fields.source.slice(6))):
+            automatic().find(entry=>entry.source===fields.source);
+          requireCondition(item&&(!branch||item.branch===branch),'This action is unavailable.',404);
+          const row=db.prepare(actionList.actionRowSql).get(item.source);
+          const update=actionList.updateAction(item,row,fields,owners,currentActor,requireCondition);
+          requireCondition(db.prepare(update.sql).run(...update.args).changes===1,'This action changed. Reload and try again.',409);
+          return json(res,200,{source:item.source});
+        }
+      }
       if (path==='/api/calendar') {
         requireCondition(calendar.calendarView(actor),'You do not have access to this calendar.',403);
         if(req.method==='GET') {

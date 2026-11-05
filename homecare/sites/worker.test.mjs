@@ -15,7 +15,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -170,6 +170,43 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await request(documentPath,'leader')).status,200);
     assert.equal((await action(owner,'archive-person',{type:'carer'},managerCarer.id)).status,200);
     assert.equal((await action(owner,'restore-person',{type:'carer'},managerCarer.id)).status,200);
+    const actionPath='/api/actions';
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:item.id,status:'recorded',reviewed:'2000-01-01',due:'2000-01-02',reference:'Fictional expired care plan'})).status,200);
+    assert.equal((await action(manager,'save-compliance',{type:'carer',subject:staff.id,item:'competencies',previous:'',status:'recorded',reviewed,due:reviewed,reference:'Fictional competency'})).status,200);
+    const work=(await (await request(actionPath,manager)).json());
+    assert.ok(work.some(row=>row.title==='Care plan'&&row.category==='Overdue review'&&row.due==='2000-01-02'));
+    assert.ok(work.some(row=>row.category==='Expiring competency'&&row.due===reviewed));
+    const missing=work.find(item=>item.category==='Missing evidence'&&item.source.includes(':care-plan:')===false&&item.person===client.name);
+    assert.ok(missing);
+    assert.equal(missing.owner,'branch-manager');
+    assert.match(missing.due,/^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(missing.choices.some(choice=>choice.label===leader.label),false);
+    const managerOption=missing.choices.find(choice=>choice.label===grant.label);
+    assert.ok(managerOption);
+    assert.equal((await request(actionPath,'other',{source:missing.source,owner:'branch-manager',due:reviewed,status:'open',version:0})).status,404);
+    assert.equal((await request(actionPath,manager,{source:missing.source,owner:managerOption.key,due:reviewed,status:'complete',version:0})).status,400);
+    assert.equal((await request(actionPath,manager,{source:missing.source,owner:managerOption.key,due:reviewed,status:'open',version:0})).status,200);
+    const assigned=(await (await request(actionPath,manager)).json()).find(item=>item.source===missing.source);
+    assert.equal(assigned.ownerName,grant.label);
+    assert.equal(assigned.due,reviewed);
+    assert.equal((await request(actionPath,'leader',{source:missing.source,owner:'branch-manager',due:reviewed,status:'open',version:1})).status,404);
+    const [,,subject,checklistItem]=missing.source.split(':');
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject,item:checklistItem,previous:'',status:'recorded',reviewed,reference:'Fictional evidence'})).status,200);
+    assert.equal((await (await request(actionPath,manager)).json()).some(item=>item.source===missing.source),false);
+    const draftAction=(await (await action('leader','save-assessment',{template:'initial',subject:client.id,date:reviewed,answers:['','','',''],complete:false})).json()).assessment.records.find(item=>!item.completedAt);
+    assert.ok((await (await request(actionPath,'leader')).json()).some(item=>item.source==='assessment:'+draftAction.id));
+    assert.equal((await action('leader','save-assessment',{version:draftAction.version,date:reviewed,answers:['Needs','Support','Controls',''],complete:true},draftAction.id)).status,200);
+    assert.equal((await (await request(actionPath,'leader')).json()).some(item=>item.source==='assessment:'+draftAction.id),false);
+    const source='diary:'+entry.id;
+    const followup=await (await request(actionPath+'?source='+encodeURIComponent(source),'leader')).json();
+    const leaderOption=followup.choices.find(choice=>choice.label===leader.label);
+    assert.ok(leaderOption);
+    assert.equal((await request(actionPath,'leader',{source,owner:leaderOption.key,due:reviewed,status:'open',version:0})).status,200);
+    assert.equal((await request(actionPath+'?source='+encodeURIComponent(source),'other')).status,404);
+    const savedFollowup=(await (await request(actionPath,manager)).json()).find(item=>item.source===source);
+    assert.equal(savedFollowup.ownerName,leader.label);
+    assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:reviewed,status:'complete',version:savedFollowup.version})).status,200);
+    assert.equal((await (await request(actionPath,manager)).json()).find(item=>item.source===source).status,'complete');
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
     assert.equal((await request('/api/state',manager)).status,403);

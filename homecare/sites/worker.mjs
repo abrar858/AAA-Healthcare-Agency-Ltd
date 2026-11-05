@@ -7,7 +7,7 @@ function response(body,status=200,headers={}) {
   }});
 }
 function publicState(state,actor) {
-  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor)};
+  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor)};
 }
 const staffRoles=['manager','team_leader','hr','rota','accounts'];
 const denied='This account has no access to the workspace.';
@@ -154,6 +154,58 @@ export default {
         });
       }
       if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      if (path==='/api/actions') {
+        domain.requireCondition(actionList.actionsView(actor),'You do not have access to the action list.',403);
+        const {state}=await workspace(env);
+        const params=new URL(request.url).searchParams;
+        const branch=params.get('branch')||actor.branch||'';
+        domain.requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
+        const people=await env.DB.prepare("SELECT email,label,role,branch FROM aaa_staff_access WHERE enabled=1 AND role IN ('manager','team_leader')"+(branch?' AND branch=?':'')).bind(...(branch?[branch]:[])).all();
+        const owners=await actionList.ownerAliases(people.results);
+        const definitions=compliance.permittedCatalog(actor);
+        const automatic=()=>actionList.automaticActions(state,actor,definitions,branch);
+        if(request.method==='GET') {
+          const source=params.get('source');
+          if(source) {
+            domain.requireCondition(source.startsWith('diary:'),'Invalid diary follow-up.');
+            const item=actionList.diaryAction(state,actor,await env.DB.prepare(diary.diaryEntrySql).bind(source.slice(6)).first());
+            domain.requireCondition(item&&(!branch||item.branch===branch),'This action is unavailable.',404);
+            return json(actionList.actionDetails(item,await env.DB.prepare(actionList.actionRowSql).bind(source).first(),owners));
+          }
+          const auto=automatic();
+          const rowScope=branch?' WHERE branch=?':'';
+          const args=branch?[branch]:[];
+          const previous=(await env.DB.prepare(actionList.actionRowsSql+rowScope).bind(...args).all()).results;
+          const rows=new Map(previous.map(item=>[item.source,item]));
+          const defaults=auto.filter(item=>!item.due&&!rows.has(item.source)).map(actionList.defaultAction);
+          for(let index=0;index<defaults.length;index+=200) {
+            await env.DB.prepare(actionList.seedMissingSql).bind(new Date().toISOString(),JSON.stringify(defaults.slice(index,index+200))).run();
+          }
+          if(defaults.length) {
+            for(const row of (await env.DB.prepare(actionList.actionRowsSql+rowScope).bind(...args).all()).results) rows.set(row.source,row);
+          }
+          const diaryRows=(await env.DB.prepare(actionList.diaryRowsSql+(branch?' WHERE d.branch=?':'')).bind(...args).all()).results;
+          const manual=diaryRows.map(row=>actionList.diaryAction(state,actor,row)).filter(Boolean);
+          return json([...auto,...manual].map(item=>actionList.actionDetails(item,rows.get(item.source),owners)));
+        }
+        if(request.method==='POST') {
+          domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
+          const fields=await readJson(request,12000);
+          domain.requireCondition(fields && typeof fields.source==='string' && fields.source.length<240,'Invalid action.');
+          const item=fields.source.startsWith('diary:')?
+            actionList.diaryAction(state,actor,await env.DB.prepare(diary.diaryEntrySql).bind(fields.source.slice(6)).first()):
+            automatic().find(entry=>entry.source===fields.source);
+          domain.requireCondition(item&&(!branch||item.branch===branch),'This action is unavailable.',404);
+          const row=await env.DB.prepare(actionList.actionRowSql).bind(item.source).first();
+          const update=actionList.updateAction(item,row,fields,owners,actor,domain.requireCondition);
+          const membership=auth.membership;
+          const condition=(row?' AND':' WHERE')+' EXISTS (SELECT 1 FROM aaa_staff_access WHERE email=? AND identity_id=? AND version=? AND enabled=1)';
+          const result=membership?await env.DB.prepare(update.sql+condition).bind(...update.args,membership.email,membership.id,membership.version).run():
+            await env.DB.prepare(update.sql).bind(...update.args).run();
+          domain.requireCondition(result.meta.changes===1,'Your access or this action changed. Reload and try again.',409);
+          return json({source:item.source});
+        }
+      }
       if (path==='/api/calendar') {
         domain.requireCondition(calendar.calendarView(actor),'You do not have access to this calendar.',403);
         const {state}=await workspace(env);

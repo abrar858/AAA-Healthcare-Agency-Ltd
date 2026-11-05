@@ -73,3 +73,10 @@ Reminder times use UK local time. Due reminders appear inside the calendar while
 Head Office Admin creates branches and assigns manager and team leader logins through Staff access. Managers can add clients, patches, carer profiles and operational records in their own branch. A carer added by a manager starts without clearance. HR or Head Office Admin must review and clear that carer before rota allocation.
 
 Only Head Office Admin can archive or restore clients, carers and form templates. Archived people are removed from active lists and new work. Existing evidence, completed assessments, diary and rota history are retained. Today’s and future outstanding visits must be resolved before archiving the person. Restored carers require clearance again.
+
+
+## Branch action list
+
+The list gathers missing evidence, overdue reviews, competencies due within 30 days and assessment drafts. Staff see items only if they can access the source. Automatic items disappear when the underlying record is resolved. New missing-evidence actions default to seven days after first appearing, with the branch manager's queue as owner. Restricted evidence defaults to Head Office Admin. You can assign a named authorised owner and adjust the due date.
+
+Use **Create follow-up action** on a diary entry to assign a callback or other task. Use **Open source** from the action card to return to that diary entry, assessment or checklist item. Diary actions can be marked completed and reviewed through the status filter.
