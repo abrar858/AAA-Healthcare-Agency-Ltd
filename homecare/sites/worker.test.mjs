@@ -1,0 +1,475 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { restoreBackup } from './restore-backup.mjs';
+import { backupTables, openBackup, takeBackup } from './backups.mjs';
+
+test('hosted access is scoped, identity-bound, and revocable', async () => {
+  const target=mkdtempSync(join(tmpdir(),'aaa-worker-test-'));
+  const storage=new DatabaseSync(':memory:');
+  try {
+    mkdirSync(join(target,'.openai'));
+    writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
+    execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
+    const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments','0007_aaa_action_completion','0008_aaa_homecare_branches','0009_aaa_access_log']) {
+      storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
+    }
+    const files=new Map();
+    const env={AAA_ORIGIN:'https://aaa.example.invalid',AAA_OWNER_EMAIL:'owner@example.invalid',AAA_BACKUP_ENCRYPTION_KEY:'42'.repeat(32),AAA_BACKUP_SERVICE_KEY:'test-backup-secret-never-production',
+      DB:{async batch(statements){
+        storage.exec('BEGIN');
+        try {
+          const result=statements.map(statement=>statement.executeBatch());
+          storage.exec('COMMIT');
+          return result;
+        } catch(error) {
+          storage.exec('ROLLBACK');
+          throw error;
+        }
+      },prepare(sql){
+        const statement=storage.prepare(sql);
+        const bound=(...args)=>({
+          first:async()=>statement.get(...args),
+          run:async()=>({meta:statement.run(...args)}),
+          all:async()=>({results:statement.all(...args)}),
+          executeBatch:()=>{
+            const results=statement.all(...args);
+            const meta=storage.prepare('SELECT changes() AS changes').get();
+            return {results,meta};
+          }
+        });
+        return {...bound(),bind:bound};
+      }},
+      BUCKET:{
+        put:async(key,body)=>files.set(key,typeof body==='string'?Buffer.from(body):Buffer.from(body)),
+        get:async key=>{
+          if(!files.has(key)) return null;
+          const bytes=files.get(key);
+          return {body:new Uint8Array(bytes),size:bytes.length,arrayBuffer:async()=>new Uint8Array(bytes).buffer,json:async()=>JSON.parse(bytes.toString('utf8'))};
+        },
+        head:async key=>files.has(key)?{}:null,
+        list:async({prefix})=>({objects:[...files.keys()].filter(key=>key.startsWith(prefix)).map(key=>({key})),truncated:false}),
+        delete:async key=>{for(const name of [key].flat()) files.delete(name);}
+      }};
+
+    const owner='owner', manager='manager';
+    const request=(path,user,body,opts={})=>worker.fetch(new Request(env.AAA_ORIGIN+path,{
+      method:body?'POST':'GET',headers:{
+        ...(user?{'oai-authenticated-user-id':opts.identity??user+'-id','oai-authenticated-user-email':user+'@example.invalid'}:{}),
+        ...(body?{Origin:opts.origin??env.AAA_ORIGIN,'Content-Type':'application/json'}:{}),...opts.headers
+      },...(body?{body:opts.rawBody?body:JSON.stringify(body)}:{})
+    }),env);
+    const action=(user,action,fields,id='')=>request(action==='save-compliance'?'/api/compliance':'/api/action',user,{action,id,fields});
+    const grant={email:manager+'@example.invalid',label:'Preston Manager',role:'manager',branch:'Preston',version:'0'};
+    const access=(user,action,fields,opts)=>request('/api/access',user,{action,fields},opts);
+    assert.equal((await request('/api/state')).status,401);
+    assert.equal((await request('/api/state',manager)).status,403);
+    assert.deepEqual((await (await request('/api/state',owner)).json()).branches,['Preston','Blackburn','Blackpool']);
+    assert.equal((await action(owner,'add-branch',{name:'preston'})).status,400);
+    assert.equal((await access(owner,'save-access',grant,{origin:'https://another.invalid'})).status,403);
+    assert.equal((await access(owner,'save-access',{...grant,email:env.AAA_OWNER_EMAIL})).status,400);
+    assert.equal((await access(owner,'save-access',{...grant,role:'admin'})).status,400);
+    const member=(await (await access(owner,'save-access',grant)).json())[0];
+    assert.equal(member.enabled,1);
+    assert.equal((await access(owner,'save-access',grant)).status,409);
+    assert.match(await (await request('/',owner)).text(),/"access":\[\{"email":"manager@example.invalid"/);
+    assert.deepEqual((await (await request('/api/state',manager)).json()).branches,['Preston']);
+    assert.equal((await request('/api/state',manager,null,{identity:'different-id'})).status,403);
+    assert.equal((await request('/api/access',manager)).status,403);
+    assert.equal((await access(manager,'save-access',{...grant,branch:'Blackburn',version:member.version})).status,403);
+    assert.equal((await action(manager,'add-patch',{name:'North',branch:'Blackburn'})).status,403);
+    const patch=(await (await action(manager,'add-patch',{name:'Central',branch:'Preston'})).json()).patches[0];
+    const client=(await (await action(manager,'add-client',{name:'Fictional Client',patch:patch.id})).json()).clients[0];
+    const reviewed=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const pdf=btoa('%PDF-1.7\nExample upload');
+    const item=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:'',status:'recorded',reviewed,pdf})).json()).compliance[0];
+    const file='/api/compliance-pdf/'+item.id;
+    const reviewFields={type:'client',subject:client.id,item:'care-plan',previous:item.id,
+      status:'recorded',reviewed:'2000-01-31',reviewMonths:'1',keepPdf:'on'};
+    assert.equal((await action(manager,'save-compliance',{...reviewFields,reviewMonths:'-1'})).status,400);
+    const carried=(await (await action(manager,'save-compliance',reviewFields)).json()).compliance[0];
+    assert.equal(carried.due,'2000-02-29');
+    assert.equal(carried.pdfSource,item.id);
+    assert.equal(carried.hasPdf,false);
+    assert.equal(await (await request(file,manager)).text(),atob(pdf));
+    const other={...grant,email:'other@example.invalid',label:'Blackburn Manager',branch:'Blackburn'};
+    assert.equal((await access(owner,'save-access',other)).status,200);
+    assert.equal((await request(file,'other')).status,404);
+    const templateFields={title:'Custom safety form',subject:'client',branch:'Preston',questions:[
+      {label:'Outcome',type:'choice',options:['Pass','Review'],required:true},
+      {label:'Notes',type:'long',required:false}
+    ]};
+    const template=(await (await action(manager,'add-assessment-template',templateFields)).json()).assessment.templates.find(item=>item.title===templateFields.title);
+    const leader={...grant,email:'leader@example.invalid',label:'Preston Team Leader',role:'team_leader'};
+    assert.equal((await access(owner,'save-access',leader)).status,200);
+    const leaderState=await (await request('/api/state','leader')).json();
+    assert.deepEqual(leaderState.branches,['Preston']);
+    assert.equal(leaderState.assessment.canBuild,false);
+    assert.equal(leaderState.clients[0].id,client.id);
+    assert.equal(leaderState.compliance.length,0);
+    assert.equal((await action('leader','add-assessment-template',templateFields)).status,403);
+    assert.equal((await action('other','save-assessment',{template:template.id,subject:client.id,date:reviewed,answers:['Pass',''],complete:true})).status,403);
+    const form={template:template.id,subject:client.id,date:reviewed,answers:['','<script>test</script>'],complete:false};
+    const draft=(await (await action('leader','save-assessment',form)).json()).assessment.records[0];
+    assert.equal(draft.completedAt,null);
+    const documentPath='/api/assessment-document/'+draft.id;
+    assert.equal((await request(documentPath,'leader')).status,404);
+    assert.equal((await action('leader','save-assessment',{...form,version:draft.version,complete:true},draft.id)).status,400);
+    assert.equal((await action('leader','save-assessment',{...form,version:draft.version,answers:['Pass',form.answers[1]],complete:true},draft.id)).status,200);
+    assert.equal((await action('leader','save-assessment',{...form,version:draft.version+1},draft.id)).status,409);
+    assert.equal((await request(documentPath,'other')).status,404);
+    const download=await request(documentPath,'manager');
+    assert.match(download.headers.get('content-disposition'),/^attachment;/);
+    const exported=await download.text();
+    assert.match(exported,/&lt;script&gt;test&lt;\/script&gt;/);
+    assert.doesNotMatch(exported,/<script>/);
+    assert.match(await (await request(documentPath+'?view=1','leader')).text(),/Print \/ Save as PDF/);
+    assert.equal((await action(manager,'archive-assessment-template',{},template.id)).status,403);
+    assert.equal((await action(owner,'archive-assessment-template',{},template.id)).status,200);
+    assert.equal((await action('leader','save-assessment',{...form,answers:['Pass',''],complete:true})).status,403);
+    assert.equal((await request(documentPath,'leader')).status,200);
+    const note={type:'client',subject:client.id,date:reviewed,time:'10:30',category:'Visit change',note:'Sample visit extended to 12:00.'};
+    assert.equal((await request('/api/diary','other',note)).status,403);
+    const logged=await request('/api/diary','leader',note);
+    assert.equal(logged.status,201);
+    const entry=await logged.json();
+    const personDiary='/api/diary?type=client&subject='+client.id;
+    assert.equal((await request(personDiary,'other')).status,403);
+    assert.equal((await request('/api/diary?entry='+entry.id,'other')).status,404);
+    assert.equal((await request('/api/diary?entry='+entry.id,manager)).status,200);
+    const clientLog=await (await request(personDiary,'manager')).json();
+    assert.equal(clientLog.entries[0].occurred_time,'10:30');
+    assert.equal(clientLog.entries[0].author,leader.label);
+    const staffFields={branch:'Preston',name:'Fictional Staff',checks:'on',training:'on',cleared:'on'};
+    const staff=(await (await action(owner,'add-staff',staffFields)).json()).staff[0];
+    const carerNote={...note,type:'carer',subject:staff.id,category:'Phone call'};
+    assert.equal((await request('/api/diary','leader',{...carerNote,related:entry.id})).status,403);
+    assert.equal((await request('/api/diary','leader',carerNote)).status,201);
+    assert.equal((await request('/api/diary','manager',{...note,time:'11:00',category:'Follow-up / correction',note:'Sample time confirmed.',related:entry.id})).status,201);
+    const afterFollowup=await (await request(personDiary,'manager')).json();
+    assert.equal(afterFollowup.entries.length,2);
+    assert.equal(afterFollowup.entries[0].related,entry.id);
+    assert.equal(afterFollowup.entries[1].note,note.note);
+    assert.equal((await (await request('/api/diary?type=carer&category=Phone+call','manager')).json()).entries.length,1);
+    assert.equal((await request('/api/diary?type=client&branch=Blackburn','manager')).status,403);
+    const calendar='/api/calendar';
+    const carePlanSource='compliance:client:'+client.id+':care-plan';
+    const review=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:carried.id,status:'recorded',reviewed,due:'2099-01-10',reference:'Fictional review'})).json()).compliance[0];
+    const firstReview=(await (await request(calendar+'?month=2099-01',manager)).json()).events.find(event=>event.source===carePlanSource);
+    assert.equal(firstReview.start_at,'2099-01-10');
+    assert.equal(firstReview.canEdit,false);
+    const rescheduled=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:review.id,status:'recorded',reviewed,due:'2099-02-11',reference:'Fictional review'})).json()).compliance[0];
+    assert.equal((await (await request(calendar+'?month=2099-01',manager)).json()).events.some(event=>event.source===carePlanSource),false);
+    const moved=(await (await request(calendar+'?month=2099-02&view=branch',manager)).json()).events.filter(event=>event.source===carePlanSource);
+    assert.equal(moved.length,1);
+    assert.equal(moved[0].id,firstReview.id);
+    assert.equal(moved[0].start_at,'2099-02-11');
+    for(const role of ['leader','other']) assert.equal((await (await request(calendar+'?month=2099-02',role)).json()).events.some(event=>event.source===carePlanSource),false);
+    assert.equal((await (await request(calendar+'?month=2099-02&view=mine',manager)).json()).events.some(event=>event.source===carePlanSource),false);
+    const restrictedSource='compliance:carer:'+staff.id+':identity';
+    assert.equal((await action(owner,'save-compliance',{type:'carer',subject:staff.id,item:'identity',previous:'',status:'recorded',reviewed,due:'2099-02-12',reference:'Fictional restricted evidence'})).status,200);
+    assert.ok((await (await request(calendar+'?month=2099-02',owner)).json()).events.some(event=>event.source===restrictedSource));
+    assert.equal((await (await request(calendar+'?month=2099-02',manager)).json()).events.some(event=>event.source===restrictedSource),false);
+
+    const draftEvent={branch:'Preston',title:'Fictional review',kind:'Assessment due',start_at:'2000-01-10T09:00',end_at:'2000-01-10T10:00',reminder_at:'2000-01-09T09:00',audience:'private',status:'scheduled',notes:'Personal note'};
+    const created=(await (await request(calendar,'leader',draftEvent)).json()).id;
+    const month=calendar+'?month=2000-01';
+    assert.equal((await (await request(month,manager)).json()).events.length,0);
+    assert.equal((await (await request(month,owner)).json()).events.length,0);
+    const personal=await (await request(month,'leader')).json();
+    assert.equal(personal.events[0].id,created);
+    assert.equal(personal.events[0].owner_key,undefined);
+    assert.equal(personal.reminders[0].id,created);
+    assert.equal((await request(calendar,manager,{...draftEvent,id:created,version:1})).status,403);
+    assert.equal((await request(calendar,'leader',{...draftEvent,id:created,version:1,audience:'branch',carer_summary:'Fictional general summary'})).status,200);
+    assert.equal((await (await request(month,manager)).json()).events[0].id,created);
+    assert.equal((await (await request(month,'other')).json()).events.length,0);
+    assert.equal((await request(month+'&branch=Preston','other')).status,403);
+    assert.equal((await request(calendar+'?history='+created,manager)).status,404);
+    assert.equal((await (await request(calendar+'?history='+created,'leader')).json())[0].audience,'private');
+    assert.equal((await request(calendar,manager,{...draftEvent,id:created,version:2})).status,403);
+    assert.equal((await request(calendar,manager,{...draftEvent,id:created,version:2,audience:'branch',status:'completed'})).status,200);
+    assert.equal((await (await request(month,'leader')).json()).reminders.length,0);
+    assert.equal((await request(calendar,'leader',{...draftEvent,id:created,version:2})).status,409);
+    assert.equal((await access(owner,'save-access',{...grant,email:'paused@example.invalid',role:'carer',staff:staff.id})).status,400);
+    storage.prepare('INSERT INTO aaa_staff_access (email,label,role,branch,staff,updated_at) VALUES (?,?,?,?,?,?)').run('paused@example.invalid','Paused Carer','carer','Preston',staff.id,new Date().toISOString());
+    assert.equal((await request('/api/state','paused')).status,403);
+    assert.equal((await request(month,'paused')).status,403);
+    const managerCarer=(await (await action(manager,'add-staff',{name:'Manager-added carer',branch:'Preston'})).json()).staff.find(item=>item.name==='Manager-added carer');
+    assert.equal(managerCarer.cleared,false);
+    assert.equal((await action(manager,'add-staff',{name:'Wrong branch',branch:'Blackburn'})).status,403);
+    assert.equal((await action(manager,'add-staff',{name:'Forged clearance',branch:'Preston',checks:'on',training:'on',cleared:'on'})).status,403);
+    assert.equal((await action(manager,'edit-staff',{name:'Manager-added carer',branch:'Preston'},managerCarer.id)).status,403);
+    assert.equal((await action(manager,'archive-person',{type:'client'},client.id)).status,403);
+    assert.equal((await action('leader','archive-person',{type:'carer'},staff.id)).status,403);
+    const activeVisit=(await (await action(manager,'add-visit',{client:client.id,date:reviewed,time:'16:00',minutes:'30',required:'1'})).json()).visits[0];
+    assert.equal((await action(manager,'allocate',{staff:staff.id},activeVisit.id)).status,200);
+    assert.equal((await action(owner,'archive-person',{type:'client'},client.id)).status,409);
+    assert.equal((await action(manager,'cancel-visit',{reason:'Fictional cancellation'},activeVisit.id)).status,200);
+    assert.equal((await action(owner,'archive-person',{type:'client'},client.id)).status,200);
+    const archived=(await (await request('/api/state',manager)).json()).clients.find(item=>item.id===client.id);
+    assert.ok(archived.archivedAt);
+    assert.equal((await (await request(calendar+'?month=2099-02',manager)).json()).events.some(event=>event.source===carePlanSource),false);
+    assert.equal((await request(personDiary,manager)).status,200);
+    assert.equal((await request('/api/diary',manager,note)).status,403);
+    assert.equal((await request(file,manager)).status,200);
+    assert.equal((await action(manager,'add-visit',{client:client.id,date:reviewed,time:'17:00',minutes:'30',required:'1'})).status,403);
+    assert.equal((await action(manager,'restore-person',{type:'client'},client.id)).status,403);
+    assert.equal((await action(owner,'restore-person',{type:'client'},client.id)).status,200);
+    assert.equal((await action(owner,'restore-assessment-template',{},template.id)).status,200);
+    assert.equal((await request(documentPath,'leader')).status,200);
+    assert.equal((await action(owner,'archive-person',{type:'carer'},managerCarer.id)).status,200);
+    assert.equal((await action(owner,'restore-person',{type:'carer'},managerCarer.id)).status,200);
+    const actionPath='/api/actions';
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:rescheduled.id,status:'recorded',reviewed:'2000-01-01',due:'2000-01-02',reference:'Fictional expired care plan'})).status,200);
+    assert.equal((await action(manager,'save-compliance',{type:'carer',subject:staff.id,item:'competencies',previous:'',status:'recorded',reviewed,due:reviewed,reference:'Fictional competency'})).status,200);
+    const work=(await (await request(actionPath,manager)).json());
+    assert.ok(work.some(row=>row.title==='Care plan'&&row.category==='Overdue review'&&row.due==='2000-01-02'));
+    assert.ok((await (await request(calendar+'?month=2000-01',manager)).json()).reminders.some(event=>event.source===carePlanSource));
+    const latest=(await (await request('/api/state',manager)).json()).compliance.find(row=>row.type==='client'&&row.subject===client.id&&row.item==='care-plan');
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:latest.id,status:'recorded',reviewed,reviewMonths:'0',reference:'Fictional review without due date'})).status,200);
+    const cleared=await (await request(calendar+'?month=2000-01',manager)).json();
+    assert.equal([...cleared.events,...cleared.reminders].some(event=>event.source===carePlanSource),false);
+
+    assert.ok(work.some(row=>row.category==='Expiring competency'&&row.due===reviewed));
+    const missing=work.find(item=>item.category==='Missing evidence'&&item.source.includes(':care-plan:')===false&&item.person===client.name);
+    assert.ok(missing);
+    assert.equal(missing.owner,'branch-manager');
+    assert.match(missing.due,/^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(missing.choices.some(choice=>choice.label===leader.label),false);
+    const managerOption=missing.choices.find(choice=>choice.label===grant.label);
+    assert.ok(managerOption);
+    assert.equal((await request(actionPath,'other',{source:missing.source,owner:'branch-manager',due:reviewed,status:'open',version:0})).status,404);
+    assert.equal((await request(actionPath,manager,{source:missing.source,owner:managerOption.key,due:reviewed,status:'complete',version:0})).status,400);
+    assert.equal((await request(actionPath,manager,{source:missing.source,owner:managerOption.key,due:reviewed,status:'open',version:0})).status,200);
+    const assigned=(await (await request(actionPath,manager)).json()).find(item=>item.source===missing.source);
+    assert.equal(assigned.ownerName,grant.label);
+    assert.equal(assigned.due,reviewed);
+    assert.equal((await request(actionPath,'leader',{source:missing.source,owner:'branch-manager',due:reviewed,status:'open',version:1})).status,404);
+    const [,,subject,checklistItem]=missing.source.split(':');
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject,item:checklistItem,previous:'',status:'recorded',reviewed,reference:'Fictional evidence'})).status,200);
+    assert.equal((await (await request(actionPath,manager)).json()).some(item=>item.source===missing.source),false);
+    const draftAction=(await (await action('leader','save-assessment',{template:'initial',subject:client.id,date:reviewed,answers:['','','',''],complete:false})).json()).assessment.records.find(item=>!item.completedAt);
+    assert.ok((await (await request(actionPath,'leader')).json()).some(item=>item.source==='assessment:'+draftAction.id));
+    assert.equal((await action('leader','save-assessment',{version:draftAction.version,date:reviewed,answers:['Needs','Support','Controls',''],complete:true},draftAction.id)).status,200);
+    assert.equal((await (await request(actionPath,'leader')).json()).some(item=>item.source==='assessment:'+draftAction.id),false);
+    const source='diary:'+entry.id;
+    const followup=await (await request(actionPath+'?source='+encodeURIComponent(source),'leader')).json();
+    const leaderOption=followup.choices.find(choice=>choice.label===leader.label);
+    assert.ok(leaderOption);
+    assert.equal((await request(actionPath,'leader',{source,owner:leaderOption.key,due:reviewed,status:'open',version:0})).status,200);
+    assert.equal((await request(actionPath+'?source='+encodeURIComponent(source),'other')).status,404);
+    const linked={branch:'Preston',title:'Fictional linked appointment',kind:'Appointment',start_at:'2099-02-15T09:00',audience:'branch',
+      status:'scheduled',subject_type:'client',subject_id:client.id};
+    assert.equal((await request(calendar,'other',{...linked,branch:'Blackburn'})).status,403);
+    const linkedId=(await (await request(calendar,manager,linked)).json()).id;
+    assert.ok(linkedId);
+    const privateId=(await (await request(calendar,manager,{...linked,title:'Fictional private appointment',audience:'private'})).json()).id;
+    const carerEvent=(await (await request(calendar,'leader',{...linked,title:'Fictional carer appointment',subject_type:'carer',subject_id:staff.id})).json()).id;
+    const profilePath=(type,id)=>'/api/people?type='+type+'&id='+id;
+    const clientProfile=profilePath('client',client.id);
+    const carerProfile=profilePath('carer',staff.id);
+    const directory=(await (await request('/api/people','leader')).json());
+    assert.ok(directory.some(person=>person.id===client.id&&person.type==='client'));
+    assert.ok(directory.some(person=>person.id===staff.id&&person.type==='carer'));
+    assert.equal((await request(clientProfile,'other')).status,404);
+    assert.equal((await request('/api/people?branch=Blackburn','leader')).status,403);
+    const profile=await (await request(clientProfile,'leader')).json();
+    assert.equal(profile.person.patch,'Central');
+    assert.ok(profile.checklist.some(row=>row.key==='telephone-review'&&row.reviewMonths===3&&row.history.length===0));
+    assert.ok(profile.checklist.find(row=>row.key==='care-plan').history.some(row=>row.id===carried.id));
+    assert.equal((await action('leader','save-compliance',{...reviewFields,previous:carried.id})).status,403);
+    assert.ok(profile.documents.some(doc=>doc.item==='care-plan'&&doc.files.some(pdf=>pdf.id===item.id)));
+    assert.equal(await (await request(file,'leader')).text(),atob(pdf));
+    assert.ok(profile.assessments.some(record=>record.completedAt));
+    assert.ok(profile.diary.entries.some(entryRow=>entryRow.id===entry.id));
+    assert.ok(profile.actions.some(item=>item.source===source));
+    assert.deepEqual(profile.appointments.map(event=>event.id),[linkedId]);
+    assert.ok((await (await request(clientProfile,manager)).json()).appointments.some(event=>event.id===privateId));
+    const teamCarer=await (await request(carerProfile,'leader')).json();
+    assert.ok(teamCarer.appointments.some(event=>event.id===carerEvent));
+    assert.equal(teamCarer.documents.some(doc=>doc.item==='identity'),false);
+    assert.equal(teamCarer.carerChecklist.some(item=>item.key==='identity'),false);
+    assert.ok(teamCarer.carerChecklist.some(item=>item.key==='competencies'&&item.history.length));
+    assert.ok(teamCarer.roster.some(visit=>visit.date===reviewed&&visit.time==='16:00'&&visit.clientName===client.name&&visit.cancelled));
+    assert.ok(teamCarer.roster.every(visit=>visit.assignments.every(assignment=>!('note' in assignment))));
+    assert.ok(profile.roster.some(visit=>visit.date===reviewed&&visit.time==='16:00'));
+    assert.equal((await request(carerProfile,'other')).status,404);
+    assert.ok((await (await request(carerProfile,owner)).json()).documents.some(doc=>doc.item==='identity'));
+    assert.equal((await request(calendar,manager,{...linked,id:linkedId,version:1,subject_type:null,subject_id:null})).status,200);
+    assert.equal((await (await request(clientProfile,'leader')).json()).appointments.length,0);
+    assert.equal((await (await request(calendar+'?history='+linkedId,manager)).json())[0].subject_id,client.id);
+    const savedFollowup=(await (await request(actionPath,manager)).json()).find(item=>item.source===source);
+    assert.equal(savedFollowup.ownerName,leader.label);
+    assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:reviewed,status:'complete',version:savedFollowup.version})).status,200);
+    assert.equal((await (await request(actionPath,manager)).json()).find(item=>item.source===source).status,'complete');
+    const reportPath='/api/reports/weekly?date='+reviewed;
+    assert.equal((await request(reportPath,'leader')).status,403);
+    assert.equal((await request(reportPath+'&branch=Blackburn',manager)).status,403);
+    assert.equal((await request('/api/reports/weekly?date=2099-03-01',manager)).status,400);
+    const report=await (await request(reportPath,manager)).json();
+    assert.deepEqual(report.branches.map(row=>row.branch),['Preston']);
+    assert.ok(report.open.some(item=>item.ownerName));
+    assert.ok(report.finished.some(item=>item.source===source&&item.category==='Diary follow-up closed'));
+    assert.ok(report.finished.some(item=>item.assessment===draftAction.id&&item.category==='Assessment completed'));
+    assert.ok(report.recorded.some(item=>item.title==='Care plan'));
+    assert.equal(report.recorded.some(item=>item.title.includes('right-to-work')),false);
+    assert.deepEqual((await (await request(reportPath,owner)).json()).branches.map(row=>row.branch),['Preston','Blackburn','Blackpool']);
+    assert.equal((await (await request('/api/reports/weekly?date=2000-01-01',manager)).json()).finished.length,0);
+    const closure=storage.prepare('SELECT completed_at FROM aaa_actions WHERE source=?').get(source).completed_at;
+    const completedFollowup=(await (await request(actionPath,manager)).json()).find(item=>item.source===source);
+    assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:'2099-01-01',status:'complete',version:completedFollowup.version})).status,200);
+    assert.equal(storage.prepare('SELECT completed_at FROM aaa_actions WHERE source=?').get(source).completed_at,closure);
+
+    assert.equal((await request('/api/backups','leader')).status,403);
+    assert.equal((await request('/api/backups',manager,{})).status,403);
+    assert.equal((await request('/api/backups',owner,{}, {origin:'https://wrong.invalid'})).status,403);
+    assert.equal((await request('/api/backup-job',null,{})).status,403);
+    const scheduledHeaders={'X-AAA-Backup-Key':env.AAA_BACKUP_SERVICE_KEY};
+    const otherPatch=(await (await action(owner,'add-patch',{name:'North',branch:'Blackburn'})).json()).patches.find(item=>item.branch==='Blackburn');
+    assert.equal((await action(owner,'add-client',{name:'Fictional Other Branch Client',patch:otherPatch.id})).status,200);
+    const otherPrivate=(await (await request(calendar,'leader',{...linked,title:'Fictional other private appointment',audience:'private'})).json()).id;
+    assert.ok(otherPrivate);
+    const made=await request('/api/backup-job',null,{}, {headers:scheduledHeaders});
+    assert.equal(made.status,201);
+    const saved=await made.json();
+    assert.equal(saved.documents,1);
+    assert.equal(saved.tables,7);
+    const backupAuditRows=storage.prepare('SELECT * FROM aaa_access_log').all();
+    assert.ok(saved.verifiedAt);
+    const retry=await (await request('/api/backup-job',null,{}, {headers:scheduledHeaders})).json();
+    assert.equal(retry.id,saved.id);
+    assert.equal(retry.reused,true);
+    assert.equal((await (await request('/api/backups',owner)).json()).length,1);
+    const backupPath='/api/backups/'+saved.id+'/download';
+    const recoveryKey='ab'.repeat(32);
+    const downloadBackup=(user,key=recoveryKey,options={})=>request(backupPath,user,'recovery_key='+key,{
+      ...options,rawBody:true,headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+    assert.equal((await request(backupPath,manager)).status,405);
+    assert.equal((await request(backupPath,owner)).status,405);
+    assert.equal((await downloadBackup('leader')).status,403);
+    assert.equal((await downloadBackup(null)).status,401);
+    assert.equal((await downloadBackup(owner,'weak')).status,400);
+    assert.equal((await downloadBackup(owner,recoveryKey,{origin:'https://wrong.invalid'})).status,403);
+    const branchList=await (await request('/api/backups',manager)).json();
+    assert.equal(branchList[0].id,saved.id);
+    assert.equal(Object.hasOwn(branchList[0],'documents'),false);
+    const branchArchive=join(target,'branch.aaa.tar');
+    const branchDownload=await downloadBackup(manager);
+    assert.equal(branchDownload.status,200);
+    writeFileSync(branchArchive,Buffer.from(await branchDownload.arrayBuffer()));
+    const branchTarget=join(target,'branch-restored');
+    assert.equal(restoreBackup(branchArchive,branchTarget,recoveryKey).branch,'Preston');
+    const branchDb=new DatabaseSync(join(branchTarget,'aaa-homecare.sqlite'),{readOnly:true});
+    try {
+      const body=JSON.parse(branchDb.prepare('SELECT body FROM aaa_workspace').get().body);
+      assert.deepEqual(body.branches,['Preston']);
+      assert.ok(body.clients.some(item=>item.id===client.id));
+      assert.ok(body.clients.every(item=>item.branch==='Preston'));
+      assert.equal(body.compliance.some(item=>item.item==='identity'),false);
+      assert.equal(branchDb.prepare('SELECT COUNT(*) AS total FROM aaa_staff_access').get().total,0);
+      assert.equal(branchDb.prepare('SELECT COUNT(*) AS total FROM aaa_access_log').get().total,0);
+      assert.equal(branchDb.prepare("SELECT COUNT(*) AS total FROM aaa_calendar WHERE branch<>'Preston'").get().total,0);
+      assert.equal(branchDb.prepare('SELECT id FROM aaa_calendar WHERE id=?').get(otherPrivate),undefined);
+    } finally {branchDb.close();}
+    assert.equal(readFileSync(join(branchTarget,'documents','compliance',item.id+'.pdf'),'utf8'),atob(pdf));
+    assert.equal((await request(backupPath,null,null,{headers:scheduledHeaders})).status,401);
+    const databaseKey=[...files.keys()].find(key=>key.endsWith('/database.json'));
+    assert.ok(databaseKey);
+    assert.equal(files.get(databaseKey).includes(Buffer.from('Fictional Client')),false);
+    const archive=join(target,'backup.tar'), recovery=join(target,'restored');
+    const portable=await downloadBackup(owner);
+    assert.equal(portable.status,200);
+    assert.match(portable.headers.get('Content-Disposition'),/\.aaa\.tar/);
+    const archiveBytes=Buffer.from(await portable.arrayBuffer());
+    assert.equal(archiveBytes.includes(Buffer.from('Fictional Client')),false);
+    assert.equal(archiveBytes.includes(Buffer.from('%PDF-')),false);
+    writeFileSync(archive,archiveBytes);
+    execFileSync('tar',['-tf',archive]);
+    assert.equal(restoreBackup(archive,recovery,recoveryKey).documents,1);
+    const restored=new DatabaseSync(join(recovery,'aaa-homecare.sqlite'),{readOnly:true});
+    try {
+      for(const table of backupTables) assert.deepEqual(restored.prepare('SELECT * FROM '+table).all(),
+        table==='aaa_access_log'?backupAuditRows:storage.prepare('SELECT * FROM '+table).all());
+      assert.equal(restored.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+    } finally {restored.close();}
+    assert.equal(readFileSync(join(recovery,'documents','compliance',item.id+'.pdf'),'utf8'),atob(pdf));
+    assert.throws(()=>restoreBackup(archive,recovery),/never overwritten/);
+    assert.throws(()=>restoreBackup(archive,join(target,'missing-key')), /AAA_BACKUP_RECOVERY_KEY/);
+    assert.throws(()=>restoreBackup(archive,join(target,'wrong-key'),'cd'.repeat(32)), /authentication failed/);
+    const truncated=join(target,'truncated.tar');
+    writeFileSync(truncated,archiveBytes.subarray(0,-512));
+    assert.throws(()=>restoreBackup(truncated,join(target,'failed-restore')),/ending/);
+    const corrupt=Buffer.from(archiveBytes);
+    const pdfOffset=corrupt.indexOf(Buffer.from('parts/1.aesgcm'));
+    assert.ok(pdfOffset>0);
+    corrupt[pdfOffset+512+12]^=1;
+    const corruptPath=join(target,'corrupt.tar');
+    writeFileSync(corruptPath,corrupt);
+    assert.throws(()=>restoreBackup(corruptPath,join(target,'corrupt-restore'),recoveryKey),/authentication failed/);
+    await env.BUCKET.delete('compliance/'+item.id);
+    assert.equal((await request('/api/backups',owner,{})).status,503);
+    assert.equal((await (await request('/api/backups',owner)).json()).length,1);
+    assert.equal((await downloadBackup(owner)).status,200);
+    await env.BUCKET.put('compliance/'+item.id,new TextEncoder().encode(atob(pdf)));
+    const legacyEnv={...env,DB:{...env.DB,batch:async queries=>(await env.DB.batch(queries)).map((table,index)=>
+      ['aaa_calendar','aaa_calendar_history'].includes(backupTables[index])?
+        {...table,results:table.results.map(({subject_type,subject_id,...row})=>row)}:backupTables[index]==='aaa_actions'?
+        {...table,results:table.results.map(({completed_at,...row})=>row)}:table)}};
+    const legacyBackup=await takeBackup(legacyEnv,'manual');
+    const legacyArchive=join(target,'legacy-backup.tar');
+    const withoutAccessLog=({aaa_access_log,...legacy})=>legacy;
+    writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id,recoveryKey,withoutAccessLog)).arrayBuffer()));
+    const legacyTarget=join(target,'legacy-restored');
+    assert.equal(restoreBackup(legacyArchive,legacyTarget,recoveryKey).documents,1);
+    const legacyDatabase=new DatabaseSync(join(legacyTarget,'aaa-homecare.sqlite'),{readOnly:true});
+    try {
+      assert.equal(legacyDatabase.prepare('SELECT subject_id FROM aaa_calendar WHERE id=?').get(carerEvent).subject_id,null);
+      assert.equal(legacyDatabase.prepare('SELECT COUNT(*) AS total FROM aaa_access_log').get().total,0);
+    } finally {legacyDatabase.close();}
+    const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
+    assert.equal(revoked.enabled,0);
+    assert.equal((await request('/api/state',manager)).status,403);
+    assert.equal((await request(file,manager)).status,403);
+    assert.equal((await request(personDiary,manager)).status,403);
+    assert.equal((await access(owner,'save-access',{...grant,version:revoked.version})).status,200);
+    assert.equal((await request('/api/state',manager)).status,200);
+    const audit='/api/access-log';
+    assert.equal((await request(audit)).status,401);
+    for(const user of [manager,'leader','other']) assert.equal((await request(audit,user)).status,403);
+    assert.equal((await request(audit+'?before=1e3',owner)).status,400);
+    const latestAudit=(await (await request(audit,owner)).json());
+    assert.equal(latestAudit.entries.length,50);
+    const older=(await (await request(audit+'?before='+latestAudit.nextBefore,owner)).json());
+    assert.ok(older.entries.length>0&&older.entries.every(row=>row.id<latestAudit.entries.at(-1).id));
+    const auditEvents=storage.prepare('SELECT * FROM aaa_access_log').all();
+    assert.equal(auditEvents.filter(row=>row.action==='staff_access_granted'&&row.target_id===grant.email).length,1);
+    assert.ok(auditEvents.some(row=>row.action==='staff_access_revoked'&&row.target_id===grant.email&&row.actor_email===env.AAA_OWNER_EMAIL));
+    assert.ok(auditEvents.some(row=>row.action==='client_profile_viewed'&&row.branch==='Preston'&&row.target_id===client.id));
+    assert.ok(auditEvents.some(row=>row.action==='backup_download_started'&&row.actor_role==='manager'&&row.branch==='Preston'));
+    assert.ok(auditEvents.some(row=>row.action==='compliance_pdf_download_started'&&row.target_id===item.id));
+    assert.ok(auditEvents.some(row=>row.action==='assessment_viewed'));
+    assert.ok(auditEvents.some(row=>row.action==='diary_entry_viewed'));
+    assert.equal(auditEvents.some(row=>row.action==='client_profile_viewed'&&row.actor_email==='other@example.invalid'),false);
+    assert.ok(auditEvents.some(row=>row.action==='access_log_viewed'&&row.actor_email===env.AAA_OWNER_EMAIL));
+    assert.equal(JSON.stringify(auditEvents).includes(recoveryKey),false);
+
+    storage.exec("CREATE TRIGGER reject_audit_test BEFORE INSERT ON aaa_access_log BEGIN SELECT RAISE(ABORT,'test'); END;");
+    try {
+      assert.equal((await access(owner,'save-access',{...grant,email:'rollback@example.invalid'})).status,500);
+      assert.equal(storage.prepare("SELECT email FROM aaa_staff_access WHERE email='rollback@example.invalid'").get(),undefined);
+      assert.equal((await request(clientProfile,manager)).status,500);
+    } finally {
+      storage.exec('DROP TRIGGER reject_audit_test');
+    }
+  } finally {
+    storage.close();
+    rmSync(target,{recursive:true,force:true});
+  }
+});
