@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="AAA Homecare branch operations prototype">
+<title>AAA Homecare | Operations</title>
+<style>
+:root{color-scheme:light;--navy:#142b2b;--green:#145f4a;--muted:#536562;--line:#dce7e2;--canvas:#f4f8f5;--white:#fff;--mint:#dff1e7;--amber:#fff0d6;--ink:#152e2a;font:15px/1.5 system-ui,sans-serif;color:var(--ink);background:var(--canvas)}
+*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button,select{cursor:pointer}button,input,select,textarea{border:1px solid var(--line);border-radius:9px;padding:.55rem .75rem;background:white;color:var(--ink)}button:hover{border-color:var(--green)}:focus-visible{outline:3px solid #3b9376;outline-offset:2px}button.primary{background:var(--green);color:white;border-color:var(--green);font-weight:650}button.danger{color:#a13629}button.small{padding:.3rem .65rem;font-size:.84rem}input,select,textarea{width:100%}textarea{min-height:5rem;resize:vertical}
+.shell{display:grid;grid-template-columns:235px minmax(0,1fr);min-height:100vh}.sidebar{padding:24px 16px;background:var(--navy);color:#fff;display:flex;flex-direction:column;gap:20px}.brand{display:flex;align-items:center;gap:10px;font-size:1.08rem;font-weight:750}.mark{display:grid;place-items:center;width:37px;height:37px;border-radius:11px;background:#bde6d1;color:#133e32}.sidebar small,.sidebar label{color:#c3d5d0}.sidebar label{display:grid;gap:6px;font-size:.84rem}.sidebar select{background:#223f3d;color:white;border-color:#53716c}.nav{display:grid;gap:5px}.nav button{border:0;background:transparent;color:#e1eeea;text-align:left}.nav button[aria-current=page]{background:#345751;color:white;font-weight:700}.nav button:hover{background:#345751}.sidefoot{margin-top:auto;border-top:1px solid #49615f;padding-top:15px}.sidefoot small{display:block;margin-bottom:9px}.sidefoot button{background:transparent;border-color:#829992;color:white}
+main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);padding:15px clamp(16px,4vw,46px);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.topbar label{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.85rem}.topbar select{width:auto;max-width:100%}.env{font-weight:700;font-size:.82rem;color:var(--green)}.content{max-width:1350px;margin:auto;padding:26px clamp(16px,4vw,46px) 48px}.hero{background:#e4f2e9;border:1px solid #d2e8d9;border-radius:18px;padding:26px;margin-bottom:18px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.72rem;font-weight:750;color:var(--green)}h1,h2,p{margin:0}h1{font-size:clamp(1.6rem,4vw,2.5rem);line-height:1.12;letter-spacing:-.04em;margin:.3rem 0 .45rem}h2{font-size:1.13rem;line-height:1.25}p.sub,.muted{color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.card,.panel{background:white;border:1px solid var(--line);border-radius:14px}.card{padding:15px}.metric{font-size:1.8rem;font-weight:750;line-height:1.2;margin:.25rem 0}.panel{margin-bottom:15px;overflow:hidden}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:16px 17px;border-bottom:1px solid var(--line)}.panel-head p{font-size:.85rem;margin-top:3px}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:10px 15px;border-bottom:1px solid #eaf0ec;vertical-align:middle}th{background:#f9fbf9;color:var(--muted);font-size:.78rem;white-space:nowrap}td{font-size:.9rem}tr:last-child td{border-bottom:0}.empty{padding:18px;color:var(--muted)}.actions{display:flex;gap:6px;flex-wrap:wrap}.badge{display:inline-block;border-radius:100px;padding:.19rem .55rem;background:#edf2f1;color:#34524e;font-size:.75rem;font-weight:700;white-space:nowrap}.badge.ok{background:var(--mint);color:#14513d}.badge.warn{background:var(--amber);color:#724d11}.badge.bad{background:#fbe8e3;color:#8b3528}.notice{margin-bottom:12px;color:var(--green);font-weight:650}.notice:empty{display:none}.notice.error{color:#a13629}.activity{list-style:none;padding:0;margin:0}.activity li{padding:10px 17px;border-bottom:1px solid #eaf0ec}.activity li:last-child{border:0}.activity time{display:block;font-size:.78rem;color:var(--muted)}.form-fields{display:grid;gap:12px;margin:14px 0}.form-fields label{display:grid;gap:4px;font-size:.88rem;font-weight:650}.form-fields label.check{display:flex;align-items:center;gap:7px}.check input{width:auto}.dialog-actions{display:flex;justify-content:flex-end;gap:8px}dialog{width:min(490px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid var(--line);border-radius:15px;padding:21px;color:var(--ink);box-shadow:0 18px 50px #0003}dialog::backdrop{background:#102b2b88}.dialog-error{color:#a13629;margin-bottom:8px}.dialog-error:empty{display:none}.notes{max-width:24rem;overflow-wrap:anywhere;white-space:pre-wrap}
+@media(max-width:850px){.shell{grid-template-columns:180px minmax(0,1fr)}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.shell{display:block}.sidebar{padding:12px;gap:10px}.nav{display:flex;flex-wrap:wrap}.nav button{padding:.35rem .55rem;font-size:.84rem}.sidefoot{display:flex;align-items:center;justify-content:space-between;padding-top:6px;gap:8px}.sidefoot small{margin:0}.topbar{padding:10px 12px}.topbar label{flex-wrap:wrap}.content{padding:15px 12px 35px}.hero{padding:17px}.card{padding:11px}th,td{padding:8px 10px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+<div class="brand"><span class="mark" aria-hidden="true">A</span> AAA Homecare</div>
+<label for="branch">Branch workspace<select id="branch"></select></label>
+<nav id="nav" class="nav" aria-label="Main navigation"></nav>
+<div class="sidefoot"><small>Fictional records · browser only</small><button type="button" class="small" id="reset">Reset sample data</button></div>
+</aside>
+<main>
+<header class="topbar"><span class="env">● Interactive demo</span><label for="role">Preview as<select id="role"></select></label></header>
+<div class="content"><p id="notice" class="notice" role="status"></p><div id="view"></div></div>
+</main>
+</div>
+<dialog id="editor" aria-labelledby="editor-title">
+<form id="editor-form"><h2 id="editor-title"></h2><div id="editor-fields" class="form-fields"></div><p id="editor-error" class="dialog-error" role="alert"></p><div class="dialog-actions"><button type="button" id="editor-cancel">Cancel</button><button class="primary" id="editor-submit">Save</button></div></form>
+</dialog>
+<script>
+'use strict';
+
+const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review' };
+const roles = {
+  admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
+  manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
+  hr:{ label:'HR Officer', pages:['hr','staff'] },
+  rota:{label:'Rota Coordinator',pages:['overview','rota','staff']},
+  accounts:{label:'Accounts',pages:['accounts']},
+  carer:{ label:'Carer', pages:['mine'] }
+};
+const actors = () => [
+  {id:'admin',role:'admin'}, {id:'hr-all',role:'hr',label:'Head Office HR'}, {id:'accounts-all',role:'accounts',label:'Head Office Accounts'},
+  ...db.branches.flatMap(branch => [
+    {id:'manager-'+branch,role:'manager',branch},
+    {id:'hr-'+branch,role:'hr',branch},
+    {id:'rota-'+branch,role:'rota',branch},
+    {id:'accounts-'+branch,role:'accounts',branch}
+  ]),
+  {id:'carer-s1',role:'carer',branch:'Preston',staff:'s1',label:'Carer · Alex Reed'},
+  {id:'carer-s4',role:'carer',branch:'Blackburn',staff:'s4',label:'Carer · Sam Ellis'}
+];
+const key = 'aaa-homecare-preview-v1';
+const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const id = () => crypto.randomUUID();
+const $ = selector => document.querySelector(selector);
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const h = escapeHtml;
+
+function seed() {
+  return {
+    branches:[...initialBranches],
+    patches:[{id:'p1',name:'Central',branch:'Preston'},{id:'p2',name:'Coastal',branch:'Blackpool'},{id:'p3',name:'North',branch:'Blackburn'}],
+    clients:[{id:'c1',name:'Taylor Morgan',patch:'p1',branch:'Preston'},{id:'c2',name:'Charlie Brooks',patch:'p2',branch:'Blackpool'},{id:'c3',name:'Jamie Riley',patch:'p3',branch:'Blackburn'}],
+    staff:[
+      {id:'s1',name:'Alex Reed',branch:'Preston',training:true,checks:true,cleared:true},
+      {id:'s2',name:'Jordan Lane',branch:'Preston',training:true,checks:false,cleared:false},
+      {id:'s3',name:'Robin West',branch:'Blackpool',training:true,checks:true,cleared:true},
+      {id:'s4',name:'Sam Ellis',branch:'Blackburn',training:true,checks:true,cleared:true}
+    ],
+    visits:[
+      {id:'v1',client:'c1',branch:'Preston',date:today,time:'09:00',minutes:30,required:1,assignments:[{staff:'s1'}],cancelled:false},
+      {id:'v2',client:'c1',branch:'Preston',date:today,time:'14:00',minutes:30,required:1,assignments:[],cancelled:false},
+      {id:'v3',client:'c2',branch:'Blackpool',date:today,time:'11:00',minutes:45,required:1,assignments:[{staff:'s3',minutes:45,note:'Sample visit completed.'}],cancelled:false},
+      {id:'v4',client:'c3',branch:'Blackburn',date:today,time:'17:00',minutes:30,required:2,assignments:[{staff:'s4'}],cancelled:false}
+    ],
+    requests:[], audit:[]
+  };
+}
+function load() {
+  try { return JSON.parse(localStorage.getItem(key)) ?? seed(); } catch { return seed(); }
+}
+let db = load();
+let actor = actors()[0];
+let scope = 'All branches';
+let page = 'overview';
+let saveAction;
+
+const staffById = staff => db.staff.find(person => person.id === staff);
+const clientById = client => db.clients.find(person => person.id === client);
+const visitById = visit => db.visits.find(item => item.id === visit);
+const inScope = branch => canAccess(branch) && (scope === 'All branches' || scope === branch);
+const canAccess = branch => !actor.branch || actor.branch === branch;
+const canSchedule = branch => ['admin','manager','rota'].includes(actor.role) && canAccess(branch);
+const canRequestCover = branch => ['admin','manager'].includes(actor.role) && canAccess(branch);
+const canHR = branch => ['admin','hr'].includes(actor.role) && canAccess(branch);
+const eligible = person => person?.cleared && person.training && person.checks;
+const actorLabel = person => person.label || [roles[person.role].label,person.branch].filter(Boolean).join(' · ');
+const branchOptions = () => db.branches.filter(canAccess).map(branch => [branch,branch]);
+const inVisit = (visit,staff) => visit.assignments.some(item => item.staff === staff);
+const completed = visit => visit.assignments.filter(item => item.minutes !== undefined).length >= visit.required;
+const openVisit = visit => !visit.cancelled && !completed(visit) && visit.assignments.length < visit.required;
+const visitStatus = visit => visit.cancelled ? ['Cancelled','bad'] : completed(visit) ? ['Completed','ok'] : openVisit(visit) ? ['Needs cover','warn'] : ['Allocated',''];
+const when = visit => visit.date.split('-').reverse().join('/')+' · '+visit.time;
+const formatMinutes = minutes => Math.floor(minutes/60)+'h '+minutes%60+'m';
+
+function ensure(condition,message) { if (!condition) throw new Error(message); }
+function save(branch,message,area='operations',relatedBranch) {
+  db.audit.unshift({branch,relatedBranch,message,area,by:actorLabel(actor),at:new Date().toISOString()});
+  localStorage.setItem(key,JSON.stringify(db));
+  render();
+  notice(message);
+}
+function notice(message, error=false) {
+  $('#notice').textContent = message;
+  $('#notice').classList.toggle('error',error);
+}
+function opts(options) { return options.map(([value,label]) => '<option value="'+h(value)+'">'+h(label)+'</option>').join(''); }
+function select(label,name,options) { return '<label>'+h(label)+'<select name="'+name+'" required>'+opts(options)+'</select></label>'; }
+function field(label,name,attributes='',value='') { return '<label>'+h(label)+'<input name="'+name+'" '+attributes+' value="'+h(value)+'"></label>'; }
+function check(label,name,checked) { return '<label class="check"><input type="checkbox" name="'+name+'" '+(checked?'checked':'')+'>'+h(label)+'</label>'; }
+function badge(label,style='') { return '<span class="badge '+style+'">'+h(label)+'</span>'; }
+function button(label,action,value='',style='small') {
+  return '<button type="button" class="'+style+'" data-action="'+action+'" data-id="'+h(value)+'">'+h(label)+'</button>';
+}
+function actions(...buttons) { return '<div class="actions">'+buttons.filter(Boolean).join('')+'</div>'; }
+function panel(title,description,body,control='') {
+  return '<section class="panel"><header class="panel-head"><div><h2>'+h(title)+'</h2>'+(description?'<p class="muted">'+h(description)+'</p>':'')+'</div>'+control+'</header>'+body+'</section>';
+}
+function table(headers,rows,empty='No records in this workspace.') {
+  if (!rows.length) return '<p class="empty">'+h(empty)+'</p>';
+  return '<div class="table-wrap" tabindex="0"><table><thead><tr>'+headers.map(col=>'<th scope="col">'+h(col)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(cell=>'<td>'+cell+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+}
+function hero(title,description) {
+  return '<header class="hero"><div class="eyebrow">'+h(scope)+' workspace</div><h1>'+h(title)+'</h1><p class="sub">'+h(description)+'</p></header>';
+}
+function metric(title,value,description) {
+  return '<div class="card"><p class="muted">'+h(title)+'</p><p class="metric">'+h(value)+'</p><small class="muted">'+h(description)+'</small></div>';
+}
+function showEditor(title,fields,handler,submit='Save') {
+  $('#editor-title').textContent = title;
+  $('#editor-fields').innerHTML = fields;
+  $('#editor-error').textContent = '';
+  $('#editor-submit').textContent = submit;
+  saveAction = handler;
+  $('#editor').showModal();
+}
+
+function overview() {
+  const visits = db.visits.filter(visit => inScope(visit.branch));
+  const people = db.staff.filter(person => inScope(person.branch));
+  const clientMinutes = visits.filter(completed).reduce((sum,visit) => sum+visit.minutes,0);
+  const carerMinutes = visits.flatMap(visit => visit.assignments).reduce((sum,item) => sum+(item.minutes??0),0);
+  const summary = db.branches.filter(inScope).map(branch => {
+    const items = visits.filter(visit => visit.branch===branch);
+    return [h(branch),String(people.filter(person => person.branch===branch).length),String(items.length),String(items.filter(openVisit).length),String(items.filter(completed).length)];
+  });
+  const activity = db.audit.filter(item => (inScope(item.branch) || (item.relatedBranch && inScope(item.relatedBranch))) && (item.area!=='hr'||actor.role==='admin'));
+  return hero('Operations overview','Track staffing, visit coverage and completed work across your workspace.') +
+    '<div class="cards">'+metric('Visits',visits.length,'Scheduled in this workspace')+metric('Visits needing cover',visits.filter(openVisit).length,'At least one carer needed')+metric('Client visit time',formatMinutes(clientMinutes),'Scheduled time on completed visits')+metric('Recorded carer time',formatMinutes(carerMinutes),'Actual minutes from each carer')+'</div>'+
+    panel('Branch performance','Visit totals follow the branch that owns the visit.',table(['Branch','Staff','Visits','Need cover','Completed'],summary))+
+    panel('Recent activity','Changes made in this demo workspace.',activity.length?'<ul class="activity">'+activity.slice(0,10).map(item=>'<li>'+h(item.message)+'<time datetime="'+h(item.at)+'">'+h(item.by+' · '+new Date(item.at).toLocaleString('en-GB',{timeZone:'Europe/London'}))+'</time></li>').join('')+'</ul>':'<p class="empty">Actions will appear here after your first change.</p>');
+}
+function staffPage(hr=false) {
+  const rows = db.staff.filter(person => inScope(person.branch)).map(person => [
+    h(person.name),h(person.branch),badge(eligible(person)?'Cleared':'Not cleared',eligible(person)?'ok':'warn'),
+    ...(hr?[badge(person.checks?'Complete':'Pending',person.checks?'ok':'warn'),badge(person.training?'Complete':'Pending',person.training?'ok':'warn'),button('Review onboarding','edit-staff',person.id)]:[])
+  ]);
+  return hero(hr?'HR & onboarding':'Branch staff',hr?'Create staff records and review checks and training before clearing carers for allocation.':'See each carer’s home branch and eligibility for allocation.')+
+    panel(hr?'Onboarding register':'Staff directory','One staff record per carer, including carers who cover other branches.',
+      table(['Name','Home branch','Eligibility',...(hr?['HR checks','Training','Action']:[])],rows),hr?button('Add staff','add-staff','','primary'):'');
+}
+function clientsPage() {
+  return hero('Clients & patches','Organise each branch into patches and give every client a managing branch.')+
+    panel('Patches','',table(['Patch','Branch','Clients'],db.patches.filter(patch=>inScope(patch.branch)).map(patch=>[h(patch.name),h(patch.branch),String(db.clients.filter(client=>client.patch===patch.id).length)])),button('Add patch','add-patch','','primary'))+
+    panel('Clients','',table(['Client','Branch','Patch'],db.clients.filter(client=>inScope(client.branch)).map(client=>[h(client.name),h(client.branch),h(db.patches.find(patch=>patch.id===client.patch)?.name)])),button('Add client','add-client','','primary'));
+}
+function rotaPage() {
+  const visits = db.visits.filter(visit=>inScope(visit.branch)).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  return hero('Branch rota','Allocate cleared carers, organise double-up visits and record cancellations.')+
+    panel('Scheduled visits','Each carer on a double-up has their own visit record.',table(['Visit','Branch','When','Carers','Status','Actions'],visits.map(visit=>[
+      h(clientById(visit.client)?.name)+'<br><small class="muted">'+h(visit.minutes+' min')+'</small>',h(visit.branch),h(when(visit)),
+      h(visit.assignments.length+' / '+visit.required)+'<br><small class="muted">'+h(visit.assignments.map(item=>staffById(item.staff)?.name).join(', '))+'</small>',
+      badge(...visitStatus(visit)),
+      actions(openVisit(visit)&&button('Allocate','allocate',visit.id),openVisit(visit)&&canRequestCover(visit.branch)&&button('Request cover','request',visit.id),
+        visit.assignments.some(item=>item.minutes!==undefined)&&button('Visit record','visit-record',visit.id),
+        !visit.cancelled&&!visit.assignments.some(item=>item.minutes!==undefined)&&button('Cancel','cancel-visit',visit.id,'small danger'))
+    ])),button('Add visit','add-visit','','primary'));
+}
+function coverPage() {
+  const items = db.requests.filter(request => inScope(request.from) || inScope(request.to));
+  return hero('Cross-branch cover','The receiving branch requests cover. The carer’s home branch approves, and Head Office Admin can authorise urgent cover.')+
+    panel('Cover requests','Start a request from an unfilled visit on the branch rota.',table(['Visit','Receiving branch','Home branch','Carer','Status','Actions'],items.map(request=>{
+      const visit = visitById(request.visit);
+      const pending = request.status==='Pending';
+      const approver = actor.role==='manager' && actor.branch===request.from;
+      const admin = actor.role==='admin';
+      return [h(clientById(visit.client)?.name)+'<br><small class="muted">'+h(when(visit))+'</small>',h(request.to),h(request.from),h(staffById(request.staff)?.name),
+        badge(request.status,pending?'warn':request.status.startsWith('Approved')?'ok':''),actions(
+          pending&&approver&&button('Approve','approve',request.id),
+          pending&&admin&&button('Authorise urgent cover','urgent',request.id),
+          pending&&(approver||admin)&&button('Decline','decline',request.id),
+          pending&&canRequestCover(request.to)&&button('Withdraw','withdraw',request.id)
+        )];
+    }),'No cover requests yet.'));
+}
+function carerPage() {
+  const visits = db.visits.filter(visit=>inVisit(visit,actor.staff)).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  return hero('My visits','Your scheduled visits and visit records, including cover at other branches.')+
+    panel('Assigned visits','',table(['Client','Visit branch','When','Planned time','My record','Action'],visits.map(visit=>{
+      const assignment = visit.assignments.find(item=>item.staff===actor.staff);
+      const hasRecord = assignment.minutes!==undefined;
+      return [h(clientById(visit.client)?.name),h(visit.branch),h(when(visit)),h(visit.minutes+' min'),
+        visit.cancelled?badge('Cancelled','bad'):hasRecord?badge('Recorded · '+assignment.minutes+' min','ok'):badge('Scheduled'),
+        visit.cancelled?'':hasRecord?'<div class="notes">'+h(assignment.note)+'</div>':button('Record visit','record',visit.id)];
+    })));
+}
+
+function accountsPage() {
+  const rows=db.visits.filter(visit=>inScope(visit.branch)).flatMap(visit=>visit.assignments
+    .filter(item=>item.minutes!==undefined).map(item=>{
+      const person=staffById(item.staff);
+      return [h(when(visit)),h(visit.branch),h(person.name),h(person.branch),h(item.minutes+' min')];
+    }));
+  return hero('Hours review','Reconcile recorded carer time by visit branch and staff home branch.')+
+    panel('Recorded visit time','Each row represents one carer’s completed allocation.',table(['Visit time','Visit branch','Carer','Home branch','Actual time'],rows));
+}
+function branchPage() {
+  return hero('Branch setup','Create a workspace with its own manager and staff directory.')+
+    panel('AAA Homecare branches','Each branch has its own manager, rota and HR demo views.',
+      table(['Branch','Manager access','Staff'],db.branches.map(branch=>[h(branch),h('Branch Manager · '+branch),String(db.staff.filter(person=>person.branch===branch).length)])),
+      button('Add branch','add-branch','','primary'));
+}
+function branchEditor() {
+  ensure(actor.role==='admin','Head Office Admin access is required.');
+  showEditor('Add branch',field('Branch name','name','required maxlength="50"'),data=>{
+    const branch=data.get('name').trim();
+    ensure(branch&&branch.toLowerCase()!=='all branches'&&!db.branches.some(name=>name.toLowerCase()===branch.toLowerCase()),'Enter a unique branch name.');
+    db.branches.push(branch);
+    save(branch,'Branch created: '+branch+'.');
+  });
+}
+
+function render() {
+  $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
+  $('#role').value = actor.id;
+  $('#branch').innerHTML = opts(actor.branch?[[actor.branch,actor.branch]]:[['All branches','All branches'],...branchOptions()]);
+  $('#branch').value = scope;
+  $('#branch').disabled = Boolean(actor.branch);
+  $('#nav').innerHTML = roles[actor.role].pages.map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
+  $('#view').innerHTML = {
+    overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage
+  }[page]();
+}
+
+function staffEditor(person) {
+  if(person) ensure(canHR(person.branch),'HR access is required.');
+  showEditor(person?'Review onboarding':'Add staff',
+    field('Full name','name','required maxlength="80"',person?.name)+
+    (person?'':select('Home branch','branch',branchOptions().filter(([branch])=>inScope(branch))))+
+    check('HR checks reviewed','checks',person?.checks)+check('Training reviewed','training',person?.training)+check('Clear for work','cleared',person?.cleared),
+    data=>{
+      const branch = person?.branch ?? data.get('branch');
+      const name = data.get('name').trim();
+      ensure(canHR(branch)&&name,'Enter a staff name for an authorised branch.');
+      const checks = data.has('checks'), training = data.has('training'), cleared = data.has('cleared');
+      ensure(!cleared || (checks && training),'Review both HR checks and training before clearing this carer.');
+      const next = {id:person?.id??id(),name,branch,checks,training,cleared};
+      if(person) Object.assign(person,next); else db.staff.push(next);
+      save(branch,cleared?name+' cleared for work.':name+' saved as not cleared.','hr');
+    });
+}
+function patchEditor() {
+  showEditor('Add patch',field('Patch name','name','required maxlength="60"')+select('Branch','branch',branchOptions().filter(([branch])=>inScope(branch))),data=>{
+    const branch=data.get('branch'), name=data.get('name').trim();
+    ensure(canSchedule(branch)&&name,'Enter a patch name for an authorised branch.');
+    ensure(!db.patches.some(patch=>patch.branch===branch&&patch.name.toLowerCase()===name.toLowerCase()),'This branch already has a patch with that name.');
+    db.patches.push({id:id(),name,branch});
+    save(branch,'Patch added: '+name+'.');
+  });
+}
+function clientEditor() {
+  const patches=db.patches.filter(patch=>inScope(patch.branch)&&canSchedule(patch.branch));
+  ensure(patches.length,'Add a patch before adding a client.');
+  showEditor('Add client',field('Client name','name','required maxlength="80"')+select('Branch and patch','patch',patches.map(patch=>[patch.id,patch.branch+' · '+patch.name])),data=>{
+    const patch=patches.find(item=>item.id===data.get('patch')), name=data.get('name').trim();
+    ensure(patch&&canSchedule(patch.branch)&&name,'Enter a client name and choose a patch.');
+    db.clients.push({id:id(),name,branch:patch.branch,patch:patch.id});
+    save(patch.branch,'Client added: '+name+'.');
+  });
+}
+function visitEditor() {
+  const clients=db.clients.filter(client=>inScope(client.branch)&&canSchedule(client.branch));
+  ensure(clients.length,'Add a client before scheduling a visit.');
+  showEditor('Add visit',select('Client','client',clients.map(client=>[client.id,client.branch+' · '+client.name]))+
+    field('Date','date','type="date" required',today)+field('Start time','time','type="time" required','09:00')+
+    field('Planned minutes','minutes','type="number" required min="1" max="720"','30')+
+    select('Carers needed','required',[[1,'One carer'],[2,'Two carers · double-up']]),data=>{
+      const client=clients.find(item=>item.id===data.get('client'));
+      ensure(client&&canSchedule(client.branch),'Select a client in an authorised branch.');
+      const minutes=Number(data.get('minutes')), required=Number(data.get('required'));
+      ensure(Number.isInteger(minutes)&&minutes>=1&&minutes<=720&&[1,2].includes(required),'Enter a valid duration and carer count.');
+      db.visits.push({id:id(),client:client.id,branch:client.branch,date:data.get('date'),time:data.get('time'),minutes,required,assignments:[],cancelled:false});
+      save(client.branch,'Visit scheduled for '+client.name+'.');
+    });
+}
+function overlaps(first,second) {
+  const start=visit=>Date.parse(visit.date+'T'+visit.time+'Z');
+  return start(first)<start(second)+second.minutes*60000 && start(second)<start(first)+first.minutes*60000;
+}
+function available(person,visit) {
+  return eligible(person)&&!inVisit(visit,person.id)&&!db.visits.some(other=>other.id!==visit.id&&!other.cancelled&&inVisit(other,person.id)&&overlaps(visit,other));
+}
+function allocateEditor(visit,cover) {
+  const permitted = cover ? canRequestCover : canSchedule;
+  ensure(visit&&permitted(visit.branch)&&openVisit(visit),'This visit has no open allocation.');
+  const people=db.staff.filter(person=>available(person,visit)&&(cover?person.branch!==visit.branch:person.branch===visit.branch));
+  ensure(people.length,cover?'No cleared carers in another branch are available.':'No cleared carers in this branch are available.');
+  showEditor(cover?'Request cross-branch cover':'Allocate carer',
+    select('Carer','staff',people.map(person=>[person.id,person.name+' · '+person.branch])),
+    data=>{
+      const person=people.find(item=>item.id===data.get('staff'));
+      ensure(permitted(visit.branch)&&openVisit(visit)&&person&&available(person,visit),'This allocation is no longer available.');
+      if(cover) {
+        ensure(!db.requests.some(item=>item.visit===visit.id&&item.staff===person.id&&item.status==='Pending'),'A pending request already exists for this carer.');
+        db.requests.push({id:id(),visit:visit.id,staff:person.id,from:person.branch,to:visit.branch,status:'Pending'});
+        save(visit.branch,'Cover requested from '+person.branch+' for '+person.name+'.','operations',person.branch);
+      } else {
+        addAssignment(visit,person);
+        save(visit.branch,person.name+' allocated to the visit.');
+      }
+    },cover?'Send request':'Allocate');
+}
+function closeRequests(visit,status) {
+  db.requests.filter(item=>item.visit===visit.id&&item.status==='Pending').forEach(item=>{item.status=status;});
+}
+function addAssignment(visit,person) {
+  visit.assignments.push({staff:person.id});
+  if(!openVisit(visit)) closeRequests(visit,'Closed · filled');
+}
+function decideCover(request,action) {
+  ensure(request?.status==='Pending','This request has already been resolved.');
+  const visit=visitById(request.visit), person=staffById(request.staff);
+  const homeManager=actor.role==='manager'&&actor.branch===request.from;
+  const admin=actor.role==='admin';
+  if(action==='withdraw') {
+    ensure(canRequestCover(request.to),'Only the receiving branch can withdraw this request.');
+    request.status='Withdrawn';
+  } else if(action==='decline') {
+    ensure(homeManager||admin,'The home branch manager or Head Office Admin must decline the request.');
+    request.status='Declined';
+  } else {
+    ensure(action==='urgent'?admin:homeManager,'This role cannot approve the request.');
+    ensure(visit&&openVisit(visit)&&person&&available(person,visit),'The carer or visit is no longer available.');
+    request.status=action==='urgent'?'Approved · urgent':'Approved';
+    addAssignment(visit,person);
+  }
+  save(request.to,'Cover request for '+person.name+': '+request.status+'.','operations',request.from);
+}
+function cancelEditor(visit) {
+  ensure(visit&&canSchedule(visit.branch)&&!visit.cancelled&&!visit.assignments.some(item=>item.minutes!==undefined),'A visit with recorded time cannot be cancelled.');
+  showEditor('Cancel visit',field('Cancellation reason','reason','required maxlength="120"'),data=>{
+    const reason=data.get('reason').trim();
+    ensure(reason,'Enter a cancellation reason.');
+    visit.cancelled=true;
+    visit.cancelReason=reason;
+    closeRequests(visit,'Closed · cancelled');
+    save(visit.branch,'Visit cancelled for '+clientById(visit.client).name+'. Reason: '+reason);
+  },'Cancel visit');
+}
+function visitRecord(visit) {
+  ensure(visit&&canSchedule(visit.branch),'This visit record is outside your branch.');
+  showEditor('Visit record',table(['Carer','Actual time','Note'],visit.assignments.filter(item=>item.minutes!==undefined).map(item=>[
+    h(staffById(item.staff)?.name),h(item.minutes+' min'),'<div class="notes">'+h(item.note)+'</div>'
+  ])),()=>{},'Done');
+}
+function recordEditor(visit) {
+  const assignment=visit?.assignments.find(item=>item.staff===actor.staff);
+  ensure(actor.role==='carer'&&visit&&!visit.cancelled&&assignment&&assignment.minutes===undefined,'This visit is unavailable to record.');
+  showEditor('Record visit',field('Actual minutes','minutes','required type="number" min="1" max="720"',visit.minutes)+
+    '<label>Visit note<textarea name="note" required maxlength="500" placeholder="Use fictional information only."></textarea></label>',data=>{
+      const minutes=Number(data.get('minutes')), note=data.get('note').trim();
+      ensure(Number.isInteger(minutes)&&minutes>=1&&minutes<=720&&note,'Enter actual minutes and a visit note.');
+      assignment.minutes=minutes;
+      assignment.note=note;
+      save(visit.branch,'Visit recorded by '+staffById(actor.staff).name+'.');
+    },'Record visit');
+}
+
+$('#role').addEventListener('change',event=>{
+  actor=actors().find(person=>person.id===event.target.value);
+  scope=actor.branch??'All branches';
+  page=roles[actor.role].pages[0];
+  notice('');
+  render();
+});
+$('#branch').addEventListener('change',event=>{scope=event.target.value;notice('');render();});
+$('#nav').addEventListener('click',event=>{
+  const target=event.target.closest('[data-page]');
+  if(target&&roles[actor.role].pages.includes(target.dataset.page)) {page=target.dataset.page;notice('');render();}
+});
+$('#editor-cancel').addEventListener('click',()=>$('#editor').close());
+$('#editor-form').addEventListener('submit',event=>{
+  event.preventDefault();
+  try {saveAction(new FormData(event.target));$('#editor').close();}
+  catch(error) {$('#editor-error').textContent=error.message;}
+});
+$('#reset').addEventListener('click',()=>{
+  showEditor('Reset sample data','<p>This removes the changes saved in this browser.</p>',()=>{
+    localStorage.removeItem(key);db=seed();actor=actors()[0];scope='All branches';page='overview';render();notice('Sample data reset.');
+  },'Reset');
+});
+$('#view').addEventListener('click',event=>{
+  const target=event.target.closest('[data-action]');
+  if(!target) return;
+  const {action,id}=target.dataset;
+  const visit=visitById(id);
+  try {
+    const handlers={
+      'add-staff':()=>staffEditor(), 'edit-staff':()=>staffEditor(staffById(id)),
+      'add-branch':branchEditor,'add-patch':patchEditor,'add-client':clientEditor,'add-visit':visitEditor,
+      allocate:()=>allocateEditor(visit,false),request:()=>allocateEditor(visit,true),
+      'cancel-visit':()=>cancelEditor(visit),'visit-record':()=>visitRecord(visit),record:()=>recordEditor(visit)
+    };
+    if(['approve','urgent','decline','withdraw'].includes(action)) decideCover(db.requests.find(item=>item.id===id),action);
+    else handlers[action]?.();
+  } catch(error) {notice(error.message,true);}
+});
+render();
+</script>
+</body>
+</html>
