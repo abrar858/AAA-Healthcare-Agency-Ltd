@@ -83,13 +83,19 @@ Use **Create follow-up action** on a diary entry to assign a callback or other t
 
 ## Backups and recovery
 
-Head Office Admin can open **Backups & recovery** to create, verify and download backups. A snapshot reads all six application tables in one database transaction, then copies every referenced PDF, including previous versions. It is listed only after all files have been read back and checked. Backups are encrypted in the hosted bucket, under a separate prefix in the same bucket as the portal's PDFs. Download a copy to an approved encrypted location that does not depend on that bucket. Downloaded TAR files contain readable care records and must be protected.
+In the hosted portal, **Head Office Admin** can create, verify and download a full workspace backup. **Branch Managers** can download an encrypted export of authorised records for their own branch. Branch exports omit staff access configuration, audit and action history, and other users’ private calendar entries. Use a full admin backup for workspace recovery.
 
-For an isolated restore, run this from a trusted computer with Node.js 24:
+A snapshot reads all six application tables in one database transaction and copies every referenced PDF. It appears in the list after all files have been read back and checked. Hosted snapshots are encrypted in the same bucket as the portal's PDFs, under a separate prefix.
 
-```bash
-node homecare/sites/restore-backup.mjs /path/to/AAA-Homecare-backup.tar /path/to/new-private-restore-folder
+Choose **Download encrypted**, save the generated recovery key separately in an approved password manager, and keep the archive in an approved location independent of the hosted bucket. The download contains encrypted data and is unusable without its matching key.
+
+For an isolated restore on a trusted computer with Node.js 24, provide the key on standard input or through a securely supplied `AAA_BACKUP_RECOVERY_KEY` environment variable:
+
+```text
+node homecare/sites/restore-backup.mjs /path/to/AAA-Homecare-backup.aaa.tar /path/to/new-private-restore-folder --key-stdin
 ```
+
+When using the environment variable, omit `--key-stdin`. Previously downloaded plaintext TAR files can still be restored without a key. Keep restored files in an approved private location.
 
 The command checks file hashes and database-to-PDF references, refuses to overwrite an existing folder, and restores `aaa-homecare.sqlite` and `documents/compliance/` together. It applies the hosted schema and runs SQLite integrity checks. This does not change the live portal. In a real incident, validate an isolated recovery before an authorised operator reimports the tables and PDFs into the original hosting environment. Upload each recovered PDF under its original object key, for example `compliance/<id>` without the local file extension. A different Site uses different sign-in identities and needs an access and calendar ownership migration before cutover.
 

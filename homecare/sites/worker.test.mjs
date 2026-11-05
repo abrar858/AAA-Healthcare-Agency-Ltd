@@ -48,7 +48,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
       method:body?'POST':'GET',headers:{
         ...(user?{'oai-authenticated-user-id':opts.identity??user+'-id','oai-authenticated-user-email':user+'@example.invalid'}:{}),
         ...(body?{Origin:opts.origin??env.AAA_ORIGIN,'Content-Type':'application/json'}:{}),...opts.headers
-      },...(body?{body:JSON.stringify(body)}:{})
+      },...(body?{body:opts.rawBody?body:JSON.stringify(body)}:{})
     }),env);
     const action=(user,action,fields,id='')=>request(action==='save-compliance'?'/api/compliance':'/api/action',user,{action,id,fields});
     const grant={email:manager+'@example.invalid',label:'Preston Manager',role:'manager',branch:'Preston',version:'0'};
@@ -311,10 +311,15 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:'2099-01-01',status:'complete',version:completedFollowup.version})).status,200);
     assert.equal(storage.prepare('SELECT completed_at FROM aaa_actions WHERE source=?').get(source).completed_at,closure);
 
-    assert.equal((await request('/api/backups',manager)).status,403);
+    assert.equal((await request('/api/backups','leader')).status,403);
+    assert.equal((await request('/api/backups',manager,{})).status,403);
     assert.equal((await request('/api/backups',owner,{}, {origin:'https://wrong.invalid'})).status,403);
     assert.equal((await request('/api/backup-job',null,{})).status,403);
     const scheduledHeaders={'X-AAA-Backup-Key':env.AAA_BACKUP_SERVICE_KEY};
+    const otherPatch=(await (await action(owner,'add-patch',{name:'North',branch:'Blackburn'})).json()).patches.find(item=>item.branch==='Blackburn');
+    assert.equal((await action(owner,'add-client',{name:'Fictional Other Branch Client',patch:otherPatch.id})).status,200);
+    const otherPrivate=(await (await request(calendar,'leader',{...linked,title:'Fictional other private appointment',audience:'private'})).json()).id;
+    assert.ok(otherPrivate);
     const made=await request('/api/backup-job',null,{}, {headers:scheduledHeaders});
     assert.equal(made.status,201);
     const saved=await made.json();
@@ -326,18 +331,50 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal(retry.reused,true);
     assert.equal((await (await request('/api/backups',owner)).json()).length,1);
     const backupPath='/api/backups/'+saved.id+'/download';
-    assert.equal((await request(backupPath,manager)).status,403);
+    const recoveryKey='ab'.repeat(32);
+    const downloadBackup=(user,key=recoveryKey,options={})=>request(backupPath,user,'recovery_key='+key,{
+      ...options,rawBody:true,headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+    assert.equal((await request(backupPath,manager)).status,405);
+    assert.equal((await request(backupPath,owner)).status,405);
+    assert.equal((await downloadBackup('leader')).status,403);
+    assert.equal((await downloadBackup(null)).status,401);
+    assert.equal((await downloadBackup(owner,'weak')).status,400);
+    assert.equal((await downloadBackup(owner,recoveryKey,{origin:'https://wrong.invalid'})).status,403);
+    const branchList=await (await request('/api/backups',manager)).json();
+    assert.equal(branchList[0].id,saved.id);
+    assert.equal(Object.hasOwn(branchList[0],'documents'),false);
+    const branchArchive=join(target,'branch.aaa.tar');
+    const branchDownload=await downloadBackup(manager);
+    assert.equal(branchDownload.status,200);
+    writeFileSync(branchArchive,Buffer.from(await branchDownload.arrayBuffer()));
+    const branchTarget=join(target,'branch-restored');
+    assert.equal(restoreBackup(branchArchive,branchTarget,recoveryKey).branch,'Preston');
+    const branchDb=new DatabaseSync(join(branchTarget,'aaa-homecare.sqlite'),{readOnly:true});
+    try {
+      const body=JSON.parse(branchDb.prepare('SELECT body FROM aaa_workspace').get().body);
+      assert.deepEqual(body.branches,['Preston']);
+      assert.ok(body.clients.some(item=>item.id===client.id));
+      assert.ok(body.clients.every(item=>item.branch==='Preston'));
+      assert.equal(body.compliance.some(item=>item.item==='identity'),false);
+      assert.equal(branchDb.prepare('SELECT COUNT(*) AS total FROM aaa_staff_access').get().total,0);
+      assert.equal(branchDb.prepare("SELECT COUNT(*) AS total FROM aaa_calendar WHERE branch<>'Preston'").get().total,0);
+      assert.equal(branchDb.prepare('SELECT id FROM aaa_calendar WHERE id=?').get(otherPrivate),undefined);
+    } finally {branchDb.close();}
+    assert.equal(readFileSync(join(branchTarget,'documents','compliance',item.id+'.pdf'),'utf8'),atob(pdf));
     assert.equal((await request(backupPath,null,null,{headers:scheduledHeaders})).status,401);
     const databaseKey=[...files.keys()].find(key=>key.endsWith('/database.json'));
     assert.ok(databaseKey);
     assert.equal(files.get(databaseKey).includes(Buffer.from('Fictional Client')),false);
     const archive=join(target,'backup.tar'), recovery=join(target,'restored');
-    const portable=await request(backupPath,owner);
+    const portable=await downloadBackup(owner);
     assert.equal(portable.status,200);
+    assert.match(portable.headers.get('Content-Disposition'),/\.aaa\.tar/);
     const archiveBytes=Buffer.from(await portable.arrayBuffer());
+    assert.equal(archiveBytes.includes(Buffer.from('Fictional Client')),false);
+    assert.equal(archiveBytes.includes(Buffer.from('%PDF-')),false);
     writeFileSync(archive,archiveBytes);
     execFileSync('tar',['-tf',archive]);
-    assert.equal(restoreBackup(archive,recovery).documents,1);
+    assert.equal(restoreBackup(archive,recovery,recoveryKey).documents,1);
     const restored=new DatabaseSync(join(recovery,'aaa-homecare.sqlite'),{readOnly:true});
     try {
       for(const table of backupTables) assert.deepEqual(restored.prepare('SELECT * FROM '+table).all(),storage.prepare('SELECT * FROM '+table).all());
@@ -345,19 +382,22 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     } finally {restored.close();}
     assert.equal(readFileSync(join(recovery,'documents','compliance',item.id+'.pdf'),'utf8'),atob(pdf));
     assert.throws(()=>restoreBackup(archive,recovery),/never overwritten/);
+    assert.throws(()=>restoreBackup(archive,join(target,'missing-key')), /AAA_BACKUP_RECOVERY_KEY/);
+    assert.throws(()=>restoreBackup(archive,join(target,'wrong-key'),'cd'.repeat(32)), /authentication failed/);
     const truncated=join(target,'truncated.tar');
     writeFileSync(truncated,archiveBytes.subarray(0,-512));
     assert.throws(()=>restoreBackup(truncated,join(target,'failed-restore')),/ending/);
     const corrupt=Buffer.from(archiveBytes);
-    const pdfOffset=corrupt.indexOf(Buffer.from('%PDF-'));
-    corrupt[pdfOffset+5]^=1;
+    const pdfOffset=corrupt.indexOf(Buffer.from('parts/1.aesgcm'));
+    assert.ok(pdfOffset>0);
+    corrupt[pdfOffset+512+12]^=1;
     const corruptPath=join(target,'corrupt.tar');
     writeFileSync(corruptPath,corrupt);
-    assert.throws(()=>restoreBackup(corruptPath,join(target,'corrupt-restore')),/checksum/);
+    assert.throws(()=>restoreBackup(corruptPath,join(target,'corrupt-restore'),recoveryKey),/authentication failed/);
     await env.BUCKET.delete('compliance/'+item.id);
     assert.equal((await request('/api/backups',owner,{})).status,503);
     assert.equal((await (await request('/api/backups',owner)).json()).length,1);
-    assert.equal((await request(backupPath,owner)).status,200);
+    assert.equal((await downloadBackup(owner)).status,200);
     await env.BUCKET.put('compliance/'+item.id,new TextEncoder().encode(atob(pdf)));
     const legacyEnv={...env,DB:{...env.DB,batch:async queries=>(await env.DB.batch(queries)).map((table,index)=>
       ['aaa_calendar','aaa_calendar_history'].includes(backupTables[index])?
@@ -365,9 +405,9 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
         {...table,results:table.results.map(({completed_at,...row})=>row)}:table)}};
     const legacyBackup=await takeBackup(legacyEnv,'manual');
     const legacyArchive=join(target,'legacy-backup.tar');
-    writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id)).arrayBuffer()));
+    writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id,recoveryKey)).arrayBuffer()));
     const legacyTarget=join(target,'legacy-restored');
-    assert.equal(restoreBackup(legacyArchive,legacyTarget).documents,1);
+    assert.equal(restoreBackup(legacyArchive,legacyTarget,recoveryKey).documents,1);
     const legacyDatabase=new DatabaseSync(join(legacyTarget,'aaa-homecare.sqlite'),{readOnly:true});
     try {
       assert.equal(legacyDatabase.prepare('SELECT subject_id FROM aaa_calendar WHERE id=?').get(carerEvent).subject_id,null);

@@ -52,6 +52,20 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 <dialog id="editor" aria-labelledby="editor-title">
 <form id="editor-form"><h2 id="editor-title"></h2><div id="editor-fields" class="form-fields"></div><p id="editor-error" class="dialog-error" role="alert"></p><div class="dialog-actions"><button type="button" id="editor-cancel">Cancel</button><button class="primary" id="editor-submit">Save</button></div></form>
 </dialog>
+<dialog id="backup-download" aria-labelledby="backup-download-title">
+  <form method="post" id="backup-download-form">
+    <h2 id="backup-download-title">Download encrypted backup</h2>
+    <div class="form-fields">
+      <p>Save this recovery key separately in your approved password manager. You’ll need it to restore this download.</p>
+      <label>Recovery key<input name="recovery_key" type="text" readonly autocomplete="off" spellcheck="false"></label>
+      <label class="check"><input type="checkbox" required> I have saved the recovery key separately</label>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" id="backup-download-close">Close</button>
+      <button type="submit" class="primary">Download</button>
+    </div>
+  </form>
+</dialog>
 <script>
 'use strict';
 const live = null;
@@ -1108,15 +1122,30 @@ async function createBackupNow() {
   }
 }
 function backupsPage() {
+  const admin=actor.role==='admin';
   const body=backupLoading?'<p class="empty" role="status">Checking backups…</p>':backupError?'<p class="empty assessment-error" role="alert">'+h(backupError)+'</p>':
-    table(['Created','Verified','Database tables','PDFs','Source','Download'],backupItems.map(item=>[
-      h(diaryTimestamp(item.createdAt)),h(diaryTimestamp(item.verifiedAt)),h(item.tables),h(item.documents),
+    table(['Created','Verified',...(admin?['Database tables','PDFs']:[]),'Source','Download'],backupItems.map(item=>[
+      h(diaryTimestamp(item.createdAt)),h(diaryTimestamp(item.verifiedAt)),...(admin?[h(item.tables),h(item.documents)]:[]),
       h(item.mode==='scheduled'?'Scheduled':'Manual'),
-      '<a href="/api/backups/'+encodeURIComponent(item.id)+'/download" download>Download archive</a>'
+      button('Download encrypted','download-backup',item.id)
     ]),'No verified backups yet.');
-  return hero('Backups & recovery','Keep a verified copy of the portal database and uploaded PDF documents.')+
-    panel('Verified backups','Keep a downloaded copy in an approved encrypted location for recovery if primary storage is unavailable.',
-      body,backupLoading?'':button('Create backup','create-backup','','primary'));
+  return hero('Backups & recovery',admin?'Download an encrypted copy of the workspace.':'Download an encrypted export of authorised records for '+actor.branch+'.')+
+    panel('Verified backups','Store the recovery key separately from the download.',
+      body,admin&&!backupLoading?button('Create backup','create-backup','','primary'):'');
+}
+const downloadDialog=$('#backup-download');
+const downloadForm=$('#backup-download-form');
+$('#backup-download-close').addEventListener('click',()=>downloadDialog.close());
+downloadDialog.addEventListener('close',()=>{
+  downloadForm.reset();
+  downloadForm.elements.recovery_key.value='';
+});
+function openBackupDownload(id) {
+  ensure(backupItems.some(item=>item.id===id),'This backup is unavailable.');
+  downloadForm.action='/api/backups/'+encodeURIComponent(id)+'/download';
+  downloadForm.elements.recovery_key.value=Array.from(crypto.getRandomValues(new Uint8Array(32)),
+    byte=>byte.toString(16).padStart(2,'0')).join('');
+  downloadDialog.showModal();
 }
 
 
@@ -1582,7 +1611,7 @@ $('#view').addEventListener('click',async event=>{
       'report-open-page':()=>{reportOpenPage=Number(id)||0;render();},
       'profile-tab':()=>{profileTab=id;render();$('#view .profile-tabs [aria-current="page"]')?.focus();},
       'open-person':()=>openPerson(id), 'person-directory':()=>{page=personDirectory();backToPeople();}, 'profile-appointment':()=>calendarEditor(id,personResult?.person),
-      'create-backup':createBackupNow,
+      'create-backup':createBackupNow,'download-backup':()=>openBackupDownload(id),
       'edit-action-item':()=>editExistingAction(id), 'diary-action-item':()=>editDiaryAction(id),
       'action-list-page':()=>moveActionPage(id),
       'archive-record':()=>personArchiveEditor(id,false), 'restore-record':()=>personArchiveEditor(id,true),

@@ -74,7 +74,7 @@ async function workspace(env) {
   domain.requireCondition(row,'Workspace storage is unavailable.',503);
   return {state:JSON.parse(row.body),rev:row.rev};
 }
-async function readJson(request,limit) {
+async function readRequestText(request,limit) {
   const length=Number(request.headers.get('content-length'));
   domain.requireCondition(!length || length<=limit,'Request is too large.',413);
   const reader=request.body?.getReader();
@@ -91,7 +91,11 @@ async function readJson(request,limit) {
     }
     input+=decoder.decode(value,{stream:true});
   }
-  try { return JSON.parse(input+decoder.decode()); }
+  return input+decoder.decode();
+}
+async function readJson(request,limit) {
+  const input=await readRequestText(request,limit);
+  try { return JSON.parse(input); }
   catch { throw new domain.AppError(400,'Invalid JSON request.'); }
 }
 function parsePdf(value) {
@@ -131,6 +135,40 @@ async function update(request,env,{actor,membership},isCompliance) {
   return json(publicState(state,actor));
 }
 
+function managerBackupSnapshot(snapshot,{actor,calendarKey},current,visibleEventIds) {
+  const {branch}=actor;
+  const [workspace]=snapshot.aaa_workspace;
+  const state=JSON.parse(workspace.body);
+  const projected=domain.project(state,actor);
+  const local=item=>item.branch===branch;
+  const currentClientIds=new Set(current.clients.filter(local).map(person=>person.id));
+  const currentStaffIds=new Set(current.staff.filter(local).map(person=>person.id));
+  const clients=projected.clients.filter(person=>currentClientIds.has(person.id));
+  const clientIds=new Set(clients.map(person=>person.id));
+  const staff=projected.staff.filter(person=>local(person)&&currentStaffIds.has(person.id));
+  const staffIds=new Set(staff.map(person=>person.id));
+  const visibleSubject=(type,id)=>(type==='client'?clientIds:staffIds).has(id);
+  const body={
+    branches:[branch],clients,patches:projected.patches,staff,
+    visits:projected.visits.filter(visit=>local(visit)&&clientIds.has(visit.client)).map(visit=>({...visit,
+      assignments:visit.assignments.filter(assignment=>staffIds.has(assignment.staff))})),
+    requests:[],audit:[],
+    compliance:compliance.complianceView(state,actor).filter(item=>visibleSubject(item.type,item.subject)),
+    assessments:assessments.assessmentView(state,actor).records.filter(item=>visibleSubject(item.template.subject,item.subject)),
+    assessmentTemplates:(state.assessmentTemplates??[]).filter(item=>!item.branch||local(item))
+  };
+  const events=snapshot.aaa_calendar.filter(event=>visibleEventIds.has(event.id)&&calendar.canReadCalendar(actor,calendarKey,event)&&
+    (!event.subject_id||visibleSubject(event.subject_type,event.subject_id)));
+  return {
+    aaa_workspace:[{...workspace,body:JSON.stringify(body)}],
+    aaa_staff_access:[],
+    aaa_diary:snapshot.aaa_diary.filter(entry=>local(entry)&&visibleSubject(entry.type,entry.subject)),
+    aaa_calendar:events.map(event=>({...event,owner_key:event.owner_key===calendarKey?calendarKey:''})),
+    aaa_calendar_history:[],
+    aaa_actions:[]
+  };
+}
+
 function backupJobAuthorised(request,env) {
   const given=request.headers.get('X-AAA-Backup-Key')||'', expected=env.AAA_BACKUP_SERVICE_KEY||'';
   if(expected.length<24||given.length!==expected.length) return false;
@@ -160,14 +198,37 @@ export default {
       if (request.method==='POST') domain.requireCondition(env.AAA_ORIGIN && request.headers.get('Origin')===env.AAA_ORIGIN,'Invalid request origin.',403);
       if (request.method==='POST' && path==='/logout') return response(null,303,{Location:'/signout-with-chatgpt?return_to=%2F'});
       if (path==='/api/backups'||path.startsWith('/api/backups/')) {
-        domain.requireCondition(!auth.membership&&actor.role==='admin','Only Head Office Admin can access backups.',403);
-        if(path==='/api/backups'&&request.method==='GET') return json(await backups.listBackups(env));
-        if(path==='/api/backups'&&request.method==='POST') return await createBackup(env,'manual');
-        if(request.method==='GET'&&path.endsWith('/download')) {
-          const id=path.split('/')[3];
+        const isAdmin=!auth.membership&&actor.role==='admin';
+        const isManager=actor.role==='manager'&&Boolean(actor.branch);
+        domain.requireCondition(isAdmin||isManager,'Only Head Office Admin and branch managers can access backups.',403);
+        if(path==='/api/backups'&&request.method==='GET') {
+          const entries=await backups.listBackups(env);
+          return json(isAdmin?entries:entries.map(({id,createdAt,verifiedAt,mode})=>({id,createdAt,verifiedAt,mode})));
+        }
+        if(path==='/api/backups'&&request.method==='POST') {
+          domain.requireCondition(isAdmin,'Only Head Office Admin can create a backup.',403);
+          return await createBackup(env,'manual');
+        }
+        const id=/^\/api\/backups\/([^/]+)\/download$/.exec(path)?.[1];
+        if(id) {
+          if(request.method!=='POST') return json({error:'Use the encrypted download form.'},405);
           domain.requireCondition(backups.validBackupId(id),'Backup not found.',404);
-          const stream=await backups.openBackup(env,id);
-          return response(stream,200,{'Content-Type':'application/x-tar','Content-Disposition':'attachment; filename="AAA-Homecare-'+id+'.tar"'});
+          domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/x-www-form-urlencoded','Use the encrypted download form.',415);
+          const fields=new URLSearchParams(await readRequestText(request,256));
+          const key=fields.get('recovery_key');
+          domain.requireCondition(backups.validRecoveryKey(key),'A valid recovery key is required.');
+          let scopeSnapshot=null;
+          if(isManager) {
+            const [{state},events]=await Promise.all([
+              workspace(env),
+              env.DB.prepare("SELECT id FROM aaa_calendar WHERE branch=? AND (owner_key=? OR audience='branch')")
+                .bind(actor.branch,auth.calendarKey).all()
+            ]);
+            const visibleEventIds=new Set(events.results.map(event=>event.id));
+            scopeSnapshot=snapshot=>managerBackupSnapshot(snapshot,auth,state,visibleEventIds);
+          }
+          const stream=await backups.openBackup(env,id,key,scopeSnapshot,isManager?actor.branch:null);
+          return response(stream,200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="AAA-Homecare-'+(isManager?'Branch-':'')+id+'.aaa.tar"'});
         }
         return json({error:'Page not found.'},404);
       }
@@ -178,7 +239,7 @@ export default {
       }
       if (request.method==='GET' && path==='/') {
         const {state}=await workspace(env);
-        const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor),site:true,backupAccess:!auth.membership&&actor.role==='admin',access:auth.membership?null:await staffAccess(env)}).replaceAll('<','\\u003c');
+        const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor),site:true,backupAccess:actor.role==='admin'||actor.role==='manager',access:auth.membership?null:await staffAccess(env)}).replaceAll('<','\\u003c');
         const nonce=crypto.randomUUID().replaceAll('-','');
         return response(html.replace('<script>','<script nonce="'+nonce+'">').replace('const live = null;',()=> 'const live = '+app+';'),200,{
           'Content-Type':'text/html; charset=utf-8',

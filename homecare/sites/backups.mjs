@@ -5,25 +5,30 @@ export const backupTables=['aaa_workspace','aaa_staff_access','aaa_diary','aaa_c
 export const validBackupId=id=>typeof id==='string'&&/^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id);
 export const validDocumentPath=path=>typeof path==='string'&&/^documents\/compliance\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.pdf$/.test(path);
 const shaPattern=/^[a-f0-9]{64}$/;
+export const validRecoveryKey=value=>typeof value==='string'&&shaPattern.test(value);
+export const exportPartData=(id,path)=>encoder.encode('AAA encrypted export v1:'+id+':'+path);
 const requireBackup=(condition,message)=>{if(!condition) throw new Error(message);};
 function jsonBytes(value) {return encoder.encode(JSON.stringify(value));}
 async function sha256(bytes) {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),value=>value.toString(16).padStart(2,'0')).join('');
 }
 async function keyOf(secret) {
-  requireBackup(typeof secret==='string'&&shaPattern.test(secret),'Backup encryption is not configured.');
+  requireBackup(validRecoveryKey(secret),'Backup encryption is not configured.');
   const raw=Uint8Array.from(secret.match(/../g),pair=>parseInt(pair,16));
   return crypto.subtle.importKey('raw',raw,'AES-GCM',false,['encrypt','decrypt']);
 }
 function dataKey(id,path) {return prefix+'snapshots/'+id+'/'+path;}
 function indexKey(id) {return prefix+'index/'+id+'.json';}
 function partData(id,path) {return encoder.encode('AAA backup v1:'+id+':'+path);}
-async function storePart(bucket,key,id,path,bytes) {
+async function encryptPart(key,data,bytes) {
   const nonce=crypto.getRandomValues(new Uint8Array(12));
-  const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:nonce,additionalData:partData(id,path)},key,bytes));
+  const encrypted=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:nonce,additionalData:data},key,bytes));
   const packed=new Uint8Array(12+encrypted.length);
   packed.set(nonce);packed.set(encrypted,12);
-  await bucket.put(dataKey(id,path),packed);
+  return packed;
+}
+async function storePart(bucket,key,id,path,bytes) {
+  await bucket.put(dataKey(id,path),await encryptPart(key,partData(id,path),bytes));
 }
 async function readPart(bucket,key,id,path,limit) {
   const object=await bucket.get(dataKey(id,path));
@@ -140,10 +145,23 @@ function tarHeader(path,size) {
   put(148,header.reduce((sum,byte)=>sum+byte,0).toString(8).padStart(6,'0')+'\0 ');
   return header;
 }
-export async function openBackup(env,id) {
+export async function openBackup(env,id,recoveryKey,scopeSnapshot=null,branch=null) {
   requireBackup(validBackupId(id)&&await env.BUCKET.head(indexKey(id)),'Backup not found.');
-  const key=await keyOf(env.AAA_BACKUP_ENCRYPTION_KEY);
-  const {manifest,bytes}=await readManifest(env,id,key);
+  const storageKey=await keyOf(env.AAA_BACKUP_ENCRYPTION_KEY);
+  const exportKey=await keyOf(recoveryKey);
+  const {manifest}=await readManifest(env,id,storageKey);
+  const database=await checkPart(env,storageKey,id,manifest.parts[0]);
+  const exportDatabase=scopeSnapshot?jsonBytes(scopeSnapshot(JSON.parse(decoder.decode(database)))):database;
+  const paths=new Set(snapshotDocuments(JSON.parse(decoder.decode(exportDatabase))));
+  const documents=manifest.parts.slice(1).filter(part=>paths.has(part.path));
+  requireBackup(documents.length===paths.size,'A backup document is missing.');
+  const exportManifest={...manifest,...(branch?{branch}:{}),parts:[
+    {path:'database.json',bytes:exportDatabase.length,sha256:await sha256(exportDatabase)},...documents
+  ]};
+  checkManifest(exportManifest,id);
+  const manifestBytes=jsonBytes(exportManifest);
+  requireBackup(manifestBytes.length<=maxMetadata,'The export manifest exceeds the backup size limit.');
+
   function* file(path,body) {
     yield tarHeader(path,body.length);
     yield body;
@@ -151,8 +169,13 @@ export async function openBackup(env,id) {
     if(pad) yield new Uint8Array(pad);
   }
   async function* tar() {
-    yield* file('manifest.json',bytes);
-    for(const part of manifest.parts) yield* file(part.path,await checkPart(env,key,id,part));
+    const manifestPath='encrypted/'+id;
+    yield* file(manifestPath,await encryptPart(exportKey,exportPartData(id,manifestPath),manifestBytes));
+    for(const [index,part] of exportManifest.parts.entries()) {
+      const path='parts/'+index+'.aesgcm';
+      const bytes=index===0?exportDatabase:await checkPart(env,storageKey,id,part);
+      yield* file(path,await encryptPart(exportKey,exportPartData(id,path),bytes));
+    }
     yield new Uint8Array(1024);
   }
   const chunks=tar();
