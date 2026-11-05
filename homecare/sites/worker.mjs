@@ -113,7 +113,7 @@ async function update(request,env,{actor,membership},isCompliance) {
   if (isCompliance) {
     file=parsePdf(fields.pdf);
     entry=compliance.recordCompliance(state,actor,fields,file,domain.requireCondition);
-  } else if (['add-assessment-template','archive-assessment-template','save-assessment'].includes(action)) {
+  } else if (['add-assessment-template','archive-assessment-template','restore-assessment-template','save-assessment'].includes(action)) {
     assessments.changeAssessment(state,actor,action,id,fields,domain.requireCondition);
   } else domain.applyAction(state,actor,action,id,fields);
   const snapshot=JSON.stringify(state);

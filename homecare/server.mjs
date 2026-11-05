@@ -167,7 +167,7 @@ function startServer() {
         }
         const entry = recordCompliance(state,actor,fields,file,requireCondition);
         if (file) db.prepare('INSERT INTO compliance_pdfs VALUES (?,?)').run(entry.id,file);
-      } else if (['add-assessment-template','archive-assessment-template','save-assessment'].includes(action)) {
+      } else if (['add-assessment-template','archive-assessment-template','restore-assessment-template','save-assessment'].includes(action)) {
         changeAssessment(state,actor,action,id,fields,requireCondition);
       } else applyAction(state,actor,action,id,fields);
       db.prepare('UPDATE workspace SET body=? WHERE id=1').run(JSON.stringify(state));

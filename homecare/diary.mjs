@@ -29,7 +29,7 @@ export function diaryListQuery(state,actor,params,requireCondition) {
 export function prepareDiaryEntry(state,actor,fields,parent,requireCondition) {
   const {type,subject,date}=fields, time=fields.time||null;
   const person=people(state,type).find(item=>item.id===subject);
-  requireCondition(person&&canUse(actor,person.branch),'You do not have access to this diary.',403);
+  requireCondition(person&&!person.archivedAt&&canUse(actor,person.branch),'You do not have access to this diary.',403);
   if(fields.related) requireCondition(parent&&parent.id===fields.related&&parent.type===type&&parent.subject===subject&&parent.branch===person.branch,
     'The related entry is unavailable.',403);
   const note=typeof fields.note==='string'?fields.note.trim():'';

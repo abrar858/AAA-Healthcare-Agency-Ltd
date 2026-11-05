@@ -53,7 +53,7 @@ The Sites checkout uses a Worker manifest with `d1: "DB"` and `r2: "BUCKET"`, an
 
 ## Assessments
 
-Head Office Admin can create templates for all branches or a selected branch. Branch managers can create and archive templates for their own branch. Team leaders can start and complete client and carer assessments in their branch. Managers can view those records. Head Office Admin can complete assessments across branches. Team leaders are added through Staff access using the same two-step private invitation process as other staff.
+Head Office Admin can create templates for all branches or a selected branch. Branch managers can create templates for their own branch. Only Head Office Admin can archive or restore templates. Team leaders can start and complete client and carer assessments in their branch. Managers can view those records. Head Office Admin can complete assessments across branches. Team leaders are added through Staff access using the same two-step private invitation process as other staff.
 
 Starter templates cover initial homecare, risks, care reviews, competency, supervision and observed practice. Add your own questions with text, date, number and choice fields. Drafts can be reopened. Once completed, records are locked and can be downloaded as a self-contained HTML document or opened in **View / Print** to print or save as PDF using the browser.
 
@@ -66,3 +66,10 @@ Head Office Admin, managers and team leaders can open **Diary**, select clients 
 Head Office Admin, branch managers and team leaders can add appointments, assessments due, reviews and reminders. A personal event is visible only to its creator. Branch events are shared with the authorised calendar users in that branch. The creator can edit their events, and the branch manager or Head Office Admin can manage branch-shared events. The creator can see earlier versions in **History**. Use **Cancelled** to keep a record of an appointment that will no longer happen.
 
 Reminder times use UK local time. Due reminders appear inside the calendar while an event is scheduled. A branch event can store a separate summary for future carer sharing. Carer sign-in is paused and the summary is internal in this release.
+
+
+## Branch creation and removal
+
+Head Office Admin creates branches and assigns manager and team leader logins through Staff access. Managers can add clients, patches, carer profiles and operational records in their own branch. A carer added by a manager starts without clearance. HR or Head Office Admin must review and clear that carer before rota allocation.
+
+Only Head Office Admin can archive or restore clients, carers and form templates. Archived people are removed from active lists and new work. Existing evidence, completed assessments, diary and rota history are retained. Today’s and future outstanding visits must be resolved before archiving the person. Restored carers require clearance again.

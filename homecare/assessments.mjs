@@ -52,10 +52,14 @@ export function changeAssessment(state,actor,action,id,fields,requireCondition) 
     state.assessmentTemplates.push({id:randomUUID(),title,subject,branch,questions:clean});
     return;
   }
-  if(action==='archive-assessment-template') {
+  if(['archive-assessment-template','restore-assessment-template'].includes(action)) {
     const template=state.assessmentTemplates.find(item=>item.id===id);
-    demand(template && canBuild(actor) && (template.branch?allowed(actor,template.branch):actor.role==='admin'));
-    template.archived=true;
+    demand(template && actor.role==='admin','Only Head Office Admin can archive or restore a form template.');
+    const archived=action==='archive-assessment-template';
+    demand(Boolean(template.archived)!==archived,'This template has already changed. Reload and try again.',409);
+    template.archived=archived;
+    state.audit.unshift({branch:template.branch,message:(archived?'Archived form: ':'Restored form: ')+template.title,
+      area:'archive',by:actor.label,at:new Date().toISOString()});
     return;
   }
   demand(action==='save-assessment','Unknown assessment action.',400);
@@ -67,7 +71,7 @@ export function changeAssessment(state,actor,action,id,fields,requireCondition) 
   demand(template);
   const people=template.subject==='client'?state.clients:state.staff;
   const subject=people.find(person=>person.id===(prior?.subject??fields.subject));
-  demand(subject && allowed(actor,subject.branch) && (!template.branch||template.branch===subject.branch));
+  demand(subject && !subject.archivedAt && allowed(actor,subject.branch) && (!template.branch||template.branch===subject.branch));
   const {date,answers}=fields;
   demand(typeof date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&Number.isFinite(Date.parse(date+'T00:00:00Z'))&&new Date(date+'T00:00:00Z').toISOString().startsWith(date),'Enter a valid assessment date.',400);
   demand(Array.isArray(answers)&&answers.length===template.questions.length,'The answers do not match this template.',400);

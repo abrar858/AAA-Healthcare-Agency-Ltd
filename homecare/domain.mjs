@@ -9,7 +9,7 @@ export function requireCondition(condition, message, status = 400) {
   if (!condition) throw new AppError(status, message);
 }
 const allowed = (actor, branch, ...roles) => roles.includes(actor.role) && (!actor.branch || actor.branch === branch);
-const eligible = person => person?.cleared && person.checks && person.training;
+const eligible = person => person?.cleared && !person.archivedAt && person.checks && person.training;
 const open = visit => !visit.cancelled && visit.assignments.length < visit.required;
 const find = (list, id) => list.find(item => item.id === id);
 const scoped = (actor, branch) => !actor.branch || actor.branch === branch;
@@ -52,13 +52,39 @@ export function applyAction(state, actor, action, id, fields) {
     audit(state, actor, branch, 'Branch created: '+branch+'.');
     return;
   }
+  if (['archive-person','restore-person'].includes(action)) {
+    noAccess(actor.role==='admin');
+    const records=fields.type==='client'?state.clients:fields.type==='carer'?state.staff:[];
+    const person=find(records,id);
+    requireCondition(person,'Record not found.',404);
+    if(action==='archive-person') {
+      requireCondition(!person.archivedAt,'This record is already archived.',409);
+      const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      const active=state.visits.some(visit=>!visit.cancelled && visit.date>=today &&
+        (fields.type==='client'?visit.client===id&&visit.assignments.filter(item=>item.minutes!==undefined).length<visit.required:
+          visit.assignments.some(item=>item.staff===id&&item.minutes===undefined)));
+      requireCondition(!active,'Resolve today’s or future rota visits before archiving this record.',409);
+      person.archivedAt=new Date().toISOString();
+      person.archivedBy=actor.label;
+      if(fields.type==='carer') person.cleared=false;
+      audit(state,actor,person.branch,'Archived '+person.name+'.','archive');
+    } else {
+      requireCondition(person.archivedAt,'This record is already active.',409);
+      delete person.archivedAt;
+      delete person.archivedBy;
+      audit(state,actor,person.branch,'Restored '+person.name+'.','archive');
+    }
+    return;
+  }
   if (action === 'add-staff' || action === 'edit-staff') {
     const person = action === 'edit-staff' ? find(state.staff, id) : null;
-    if (action === 'edit-staff') noAccess(person);
+    if (action === 'edit-staff') noAccess(person&&!person.archivedAt);
     const branch = person?.branch ?? fields.branch;
-    noAccess(state.branches.includes(branch) && hr(actor, branch));
+    const managerAdd = action==='add-staff' && actor.role==='manager' && actor.branch===branch;
+    noAccess(state.branches.includes(branch) && (hr(actor,branch)||managerAdd));
     const name = text(fields.name, 80);
     const checks = fields.checks === 'on', training = fields.training === 'on', cleared = fields.cleared === 'on';
+    noAccess(!managerAdd || (!checks && !training && !cleared));
     requireCondition(!cleared || (checks && training), 'Review both HR checks and training before clearing this carer.');
     const record = {id: person?.id ?? randomUUID(), name, branch, checks, training, cleared};
     if (person) Object.assign(person, record);
@@ -85,7 +111,7 @@ export function applyAction(state, actor, action, id, fields) {
   }
   if (action === 'add-visit') {
     const client = find(state.clients, fields.client);
-    noAccess(client && schedule(actor, client.branch));
+    noAccess(client && !client.archivedAt && schedule(actor, client.branch));
     const {date, time} = fields, required = Number(fields.required);
     requireCondition(typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && typeof time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(time) && Number.isFinite(start({date,time})) && new Date(start({date,time})).toISOString().startsWith(date) && [1,2].includes(required), 'Enter a valid date, time and carer count.');
     state.visits.push({id:randomUUID(), client:client.id, branch:client.branch, date, time, minutes:minutes(fields.minutes), required, assignments:[], cancelled:false});
@@ -104,7 +130,7 @@ export function applyAction(state, actor, action, id, fields) {
     if (action === 'withdraw') request.status = 'Withdrawn';
     else if (action === 'decline') request.status = 'Declined';
     else {
-      requireCondition(visit && open(visit) && available(state, person, visit), 'The carer or visit is no longer available.', 409);
+      requireCondition(visit && !find(state.clients,visit.client)?.archivedAt && open(visit) && available(state, person, visit), 'The carer or visit is no longer available.', 409);
       request.status = action === 'urgent' ? 'Approved · urgent' : 'Approved';
       assign(state, visit, person);
     }
@@ -133,7 +159,7 @@ export function applyAction(state, actor, action, id, fields) {
     return;
   }
   const person = find(state.staff, fields.staff);
-  requireCondition(open(visit) && available(state, person, visit) && (action === 'request' ? person.branch !== visit.branch : person.branch === visit.branch), 'The carer or visit is no longer available.', 409);
+  requireCondition(!find(state.clients,visit.client)?.archivedAt && open(visit) && available(state, person, visit) && (action === 'request' ? person.branch !== visit.branch : person.branch === visit.branch), 'The carer or visit is no longer available.', 409);
   if (action === 'request') {
     requireCondition(!state.requests.some(item => item.visit === id && item.staff === person.id && item.status === 'Pending'), 'A pending request already exists for this carer.', 409);
     state.requests.push({id:randomUUID(), visit:id, staff:person.id, from:person.branch, to:visit.branch, status:'Pending'});
@@ -144,13 +170,13 @@ export function applyAction(state, actor, action, id, fields) {
   }
 }
 
-const summary = person => ({id:person.id, name:person.name, branch:person.branch, cleared:Boolean(eligible(person)), eligibilityOnly:true});
+const summary = person => ({id:person.id, name:person.name, branch:person.branch, cleared:Boolean(eligible(person)), eligibilityOnly:true, archivedAt:person.archivedAt});
 export function project(state, actor) {
   if (actor.role === 'admin') return state;
   const result = {...initialState(), branches:state.branches.filter(branch => scoped(actor,branch))};
   if (actor.role === 'team_leader') {
-    result.clients = state.clients.filter(person=>scoped(actor,person.branch)).map(({id,name,branch,patch})=>({id,name,branch,patch}));
-    result.staff = state.staff.filter(person=>scoped(actor,person.branch)).map(({id,name,branch})=>({id,name,branch}));
+    result.clients = state.clients.filter(person=>scoped(actor,person.branch)).map(({id,name,branch,patch,archivedAt})=>({id,name,branch,patch,archivedAt}));
+    result.staff = state.staff.filter(person=>scoped(actor,person.branch)).map(({id,name,branch,archivedAt})=>({id,name,branch,archivedAt}));
     return result;
   }
   if (actor.role === 'hr') {
@@ -184,6 +210,6 @@ export function project(state, actor) {
   result.coverCandidates = actor.role === 'manager' ? state.staff.filter(person=>person.branch!==actor.branch && eligible(person)).map(summary) : [];
   const coverStaff = new Set(result.requests.map(request => request.staff));
   result.staff = state.staff.filter(person => scoped(actor, person.branch) || assignedStaff.has(person.id) || coverStaff.has(person.id)).map(summary);
-  result.audit = state.audit.filter(item => item.area !== 'hr' && (scoped(actor, item.branch) || actor.branch === item.relatedBranch));
+  result.audit = state.audit.filter(item => !['hr','archive'].includes(item.area) && (scoped(actor, item.branch) || actor.branch === item.relatedBranch));
   return result;
 }

@@ -38,7 +38,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
-const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar' };
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
@@ -97,7 +97,7 @@ const navigation = () => {
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  return [...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...roles[actor.role].pages];
+  return [...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
 };
 let page = navigation()[0];
 let saveAction;
@@ -112,7 +112,7 @@ const canAccess = branch => !actor.branch || actor.branch === branch;
 const canSchedule = branch => ['admin','manager','rota'].includes(actor.role) && canAccess(branch);
 const canRequestCover = branch => ['admin','manager'].includes(actor.role) && canAccess(branch);
 const canHR = branch => ['admin','hr'].includes(actor.role) && canAccess(branch);
-const eligible = person => person?.cleared && (person.eligibilityOnly || (person.training && person.checks));
+const eligible = person => person?.cleared && !person.archivedAt && (person.eligibilityOnly || (person.training && person.checks));
 const actorLabel = person => person.label || [roles[person.role].label,person.branch].filter(Boolean).join(' · ');
 const branchOptions = () => db.branches.filter(canAccess).map(branch => [branch,branch]);
 const inVisit = (visit,staff) => visit.assignments.some(item => item.staff === staff);
@@ -180,19 +180,20 @@ function overview() {
     panel('Recent activity','Changes made in this demo workspace.',activity.length?'<ul class="activity">'+activity.slice(0,10).map(item=>'<li>'+h(item.message)+'<time datetime="'+h(item.at)+'">'+h(item.by+' · '+new Date(item.at).toLocaleString('en-GB',{timeZone:'Europe/London'}))+'</time></li>').join('')+'</ul>':'<p class="empty">Actions will appear here after your first change.</p>');
 }
 function staffPage(hr=false) {
-  const rows = db.staff.filter(person => inScope(person.branch)).map(person => [
+  const rows = db.staff.filter(person => inScope(person.branch)&&!person.archivedAt).map(person => [
     h(person.name),h(person.branch),badge(eligible(person)?'Cleared':'Not cleared',eligible(person)?'ok':'warn'),
     ...(hr?[badge(person.checks?'Complete':'Pending',person.checks?'ok':'warn'),badge(person.training?'Complete':'Pending',person.training?'ok':'warn'),button('Review onboarding','edit-staff',person.id)]:[]),
-    ...(db.diary?[button('Open diary','person-diary','carer:'+person.id)]:[])
+    ...(db.diary?[button('Open diary','person-diary','carer:'+person.id)]:[]),
+    ...(live&&actor.role==='admin'?[button('Archive','archive-record','carer:'+person.id)]:[])
   ]);
   return hero(hr?'HR & onboarding':'Branch staff',hr?'Create staff records and review checks and training before clearing carers for allocation.':'See each carer’s home branch and eligibility for allocation.')+
     panel(hr?'Onboarding register':'Staff directory','One staff record per carer, including carers who cover other branches.',
-      table(['Name','Home branch','Eligibility',...(hr?['HR checks','Training','Action']:[]),...(db.diary?['Diary']:[])],rows),hr?button('Add staff','add-staff','','primary'):'');
+      table(['Name','Home branch','Eligibility',...(hr?['HR checks','Training','Action']:[]),...(db.diary?['Diary']:[]),...(live&&actor.role==='admin'?['Archive']:[])],rows),(hr||actor.role==='manager')?button('Add staff','add-staff','','primary'):'');
 }
 function clientsPage() {
   return hero('Clients & patches','Organise each branch into patches and give every client a managing branch.')+
-    panel('Patches','',table(['Patch','Branch','Clients'],db.patches.filter(patch=>inScope(patch.branch)).map(patch=>[h(patch.name),h(patch.branch),String(db.clients.filter(client=>client.patch===patch.id).length)])),button('Add patch','add-patch','','primary'))+
-    panel('Clients','',table(['Client','Branch','Patch',...(db.diary?['Diary']:[])],db.clients.filter(client=>inScope(client.branch)).map(client=>[h(client.name),h(client.branch),h(db.patches.find(patch=>patch.id===client.patch)?.name),...(db.diary?[button('Open diary','person-diary','client:'+client.id)]:[])])),button('Add client','add-client','','primary'));
+    panel('Patches','',table(['Patch','Branch','Clients'],db.patches.filter(patch=>inScope(patch.branch)).map(patch=>[h(patch.name),h(patch.branch),String(db.clients.filter(client=>client.patch===patch.id&&!client.archivedAt).length)])),button('Add patch','add-patch','','primary'))+
+    panel('Clients','',table(['Client','Branch','Patch',...(db.diary?['Diary']:[]),...(live&&actor.role==='admin'?['Archive']:[])],db.clients.filter(client=>inScope(client.branch)&&!client.archivedAt).map(client=>[h(client.name),h(client.branch),h(db.patches.find(patch=>patch.id===client.patch)?.name),...(db.diary?[button('Open diary','person-diary','client:'+client.id)]:[]),...(live&&actor.role==='admin'?[button('Archive','archive-record','client:'+client.id)]:[])])),button('Add client','add-client','','primary'));
 }
 function rotaPage() {
   const visits = db.visits.filter(visit=>inScope(visit.branch)).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
@@ -201,7 +202,7 @@ function rotaPage() {
       h(clientById(visit.client)?.name)+'<br><small class="muted">'+h(visit.minutes+' min')+'</small>',h(visit.branch),h(when(visit)),
       h(visit.assignments.length+' / '+visit.required)+'<br><small class="muted">'+h(visit.assignments.map(item=>staffById(item.staff)?.name).join(', '))+'</small>',
       badge(...visitStatus(visit)),
-      actions(openVisit(visit)&&button('Allocate','allocate',visit.id),openVisit(visit)&&canRequestCover(visit.branch)&&button('Request cover','request',visit.id),
+      actions(!clientById(visit.client)?.archivedAt&&openVisit(visit)&&button('Allocate','allocate',visit.id),!clientById(visit.client)?.archivedAt&&openVisit(visit)&&canRequestCover(visit.branch)&&button('Request cover','request',visit.id),
         (!live||actor.role!=='rota')&&visit.assignments.some(item=>item.minutes!==undefined)&&button('Visit record','visit-record',visit.id),
         !visit.cancelled&&!visit.assignments.some(item=>item.minutes!==undefined)&&button('Cancel','cancel-visit',visit.id,'small danger'))
     ])),button('Add visit','add-visit','','primary'));
@@ -296,15 +297,15 @@ function complianceRegister(type) {
     const key=entry.subject+':'+entry.item;
     if(!latest.has(key)) latest.set(key,entry);
   }
-  const peopleInFilter = applicable.filter(person=>!filters.subject||person.id===filters.subject);
+  const peopleInFilter = applicable.filter(person=>filters.subject?person.id===filters.subject:!person.archivedAt);
   const rows = peopleInFilter.flatMap(person=>live.catalog[type].map(definition=>{
     const entry = latest.get(person.id+':'+definition.key);
     return {person,definition,entry,status:complianceStatus(definition,entry)};
-  }));
+  }).filter(row=>!row.person.archivedAt||row.entry));
   const totals = Object.fromEntries(priorityStates.map(status=>[status,0]));
   const queue = new Map();
   for(const {person,status} of rows) {
-    if(!priorityStates.includes(status)) continue;
+    if(person.archivedAt||!priorityStates.includes(status)) continue;
     totals[status]++;
     if(!queue.has(person.id)) queue.set(person.id,{person,counts:Object.fromEntries(priorityStates.map(key=>[key,0]))});
     queue.get(person.id).counts[status]++;
@@ -328,7 +329,7 @@ function compliancePage(type) {
   const choices = (options,value)=>options.map(([key,label])=>'<option value="'+h(key)+'"'+(key===value?' selected':'')+'>'+h(label)+'</option>').join('');
   const filter = '<form class="register-filters" id="compliance-filter" data-type="'+type+'">'+
     (type==='client'?'<label>Patch<select name="patch">'+choices([['','All patches'],...patches.map(patch=>[patch.id,patch.name+' · '+patch.branch])],filters.patch)+'</select></label>':'')+
-    '<label>Person<select name="subject">'+choices([['','Everyone'],...people.filter(person=>!filters.patch||person.patch===filters.patch).map(person=>[person.id,person.name+' · '+person.branch])],filters.subject)+'</select></label>'+
+    '<label>Person<select name="subject">'+choices([['','Everyone'],...people.filter(person=>!filters.patch||person.patch===filters.patch).map(person=>[person.id,person.name+' · '+person.branch+(person.archivedAt?' · Archived':'')])],filters.subject)+'</select></label>'+
     '<label>Status<select name="status">'+choices([['','All statuses'],...complianceStates.map(([key,label])=>[key,label])],filters.status)+'</select></label>'+
     '<button type="submit">Apply filters</button>'+
     ((filters.subject||filters.patch||filters.status)?button('Clear filters','clear-compliance',type):'')+'</form>';
@@ -352,7 +353,7 @@ function compliancePage(type) {
         const evidence = entry ? [entry.reference?h(entry.reference):'',evidenceLink(entry)].filter(Boolean).join('<br>') : '';
         return [h(person.name)+'<br><small class="muted">'+h(location(person))+'</small>',h(definition.label),
           badge(label,style),h(displayDate(entry?.reviewed)),h(displayDate(entry?.due)),evidence||'—',
-          actions(button('Update','save-compliance',key),entry&&button('History','compliance-history',key))];
+          actions(!person.archivedAt&&button('Update','save-compliance',key),entry&&button('History','compliance-history',key))];
       }),'No matching checklist items. Add a client or staff record first, or change your filters.')+pagination)+'</div>';
 }
 function showComplianceRegister() {
@@ -486,7 +487,7 @@ function revokeEditor(email) {
 
 let assessmentScreen = null;
 const assessmentTypes = [['short','Short text'],['long','Long text'],['choice','Multiple choice'],['yesno','Yes / No / Not applicable'],['date','Date'],['number','Number']];
-const assessmentPeople = type => (type==='client'?db.clients:db.staff).filter(person=>inScope(person.branch));
+const assessmentPeople = type => (type==='client'?db.clients:db.staff).filter(person=>inScope(person.branch)&&!person.archivedAt);
 const assessmentTemplates = () => db.assessment.templates.filter(template=>!template.branch||inScope(template.branch));
 function openAssessmentScreen(screen) {
   if(screen.startsWith('start:')) {
@@ -516,6 +517,7 @@ function addAssessmentQuestion() {
   container.lastElementChild.querySelector('[name="label"]').focus();
 }
 function archiveAssessmentTemplate(id) {
+  if(actor.role!=='admin') return;
   const template=assessmentTemplates().find(item=>item.id===id&&!item.archived&&!item.builtIn);
   if(!template) return;
   pendingAction={action:'archive-assessment-template',id};
@@ -569,7 +571,7 @@ function assessmentsPage() {
     panel('Form templates','Use a starter form or create a template for your team.',
       '<div class="assessment-body"><div class="assessment-grid">'+templates.map(template=>{
         const available=assessmentPeople(template.subject).some(person=>!template.branch||person.branch===template.branch);
-        const canArchive=!template.builtIn&&db.assessment.canBuild&&(actor.role==='admin'||actor.branch===template.branch);
+        const canArchive=!template.builtIn&&actor.role==='admin';
         return card(template.title,'<small>'+h((template.subject==='client'?'Client':'Carer')+' · '+(template.branch??'All branches')+' · '+template.questions.length+' questions')+'</small>',
           actions(db.assessment.canComplete&&available?button('Start assessment','assessment-screen','start:'+template.id):db.assessment.canComplete?'<small class="muted">Add a '+template.subject+' in this branch first.</small>':'',
           canArchive&&button('Archive','archive-template',template.id)));
@@ -651,7 +653,7 @@ function diaryPage() {
       '<article class="assessment-card diary-card"><strong>'+h(entry.person+' · '+entry.branch)+'</strong>'+
       '<div>'+badge(entry.category)+' <span class="diary-meta">Event: '+h(displayDate(entry.occurred_date)+(entry.occurred_time?' at '+entry.occurred_time:''))+'</span></div>'+
       '<p class="diary-note">'+h(entry.note)+'</p><small class="diary-meta">Logged by '+h(entry.author)+' · '+h(diaryTimestamp(entry.created_at))+'</small>'+
-      actions(entry.related&&button('View original','read-diary',entry.related),button('Add follow-up','diary-follow-up',entry.id))+'</article>').join('')+'</div>':
+      actions(entry.related&&button('View original','read-diary',entry.related),diaryPeople(entry.type).some(person=>person.id===entry.subject&&!person.archivedAt)&&button('Add follow-up','diary-follow-up',entry.id))+'</article>').join('')+'</div>':
       '<p class="muted">No diary entries match these filters.</p>';
   return hero('Diary','Record calls, visit changes and follow-ups for clients and carers.')+
     panel('Branch diary','Entries are kept in date order. Add a follow-up or correction to a saved entry.',filter+
@@ -659,7 +661,7 @@ function diaryPage() {
         '<div class="register-pages"><span>Page '+(diaryFilters.page+1)+'</span>'+
         actions(diaryFilters.page>0&&button('Previous','diary-page',diaryFilters.page-1),
           diaryResult.hasNext&&button('Next','diary-page',diaryFilters.page+1))+'</div>':''),
-      people.length?button('Add diary entry','add-diary','','primary'):'');
+      people.some(person=>!person.archivedAt&&(!diaryFilters.subject||person.id===diaryFilters.subject))?button('Add diary entry','add-diary','','primary'):'');
 }
 function openPersonDiary(key) {
   const [type,subject]=key.split(':');
@@ -678,7 +680,7 @@ function moveDiaryPage(value) {
 function diaryEditor(parentId='') {
   const parent=parentId?diaryResult.entries.find(entry=>entry.id===parentId):null;
   ensure(!parentId||parent,'This diary entry is unavailable.');
-  const type=parent?.type??diaryFilters.type, people=diaryPeople(type);
+  const type=parent?.type??diaryFilters.type, people=diaryPeople(type).filter(person=>!person.archivedAt);
   ensure(people.length,'Add a '+(type==='client'?'client':'carer')+' before recording a diary entry.');
   pendingAction={action:'add-diary',id:''};
   const subjectField=parent?hiddenField('subject',parent.subject)+'<p><strong>Person:</strong> '+h(parent.person)+'</p>':
@@ -691,7 +693,7 @@ function diaryEditor(parentId='') {
     ()=>{},'Save diary entry');
   const fields=$('#editor-fields');
   if(parent) fields.querySelector('[name="category"]').value='Follow-up / correction';
-  else fields.querySelector('[name="subject"]').value=diaryFilters.subject||'';
+  else fields.querySelector('[name="subject"]').value=people.some(person=>person.id===diaryFilters.subject)?diaryFilters.subject:'';
 }
 async function viewDiaryEntry(id) {
   const record=await diaryFetch({entry:id});
@@ -836,6 +838,37 @@ $('#view').addEventListener('change',event=>{
   if(event.target.id==='calendar-mobile-day') openCalendarDay(event.target.value);
 });
 
+
+function archivePage() {
+  const rows=[...db.clients.filter(person=>person.archivedAt&&inScope(person.branch)).map(person=>({person,type:'client'})),
+    ...db.staff.filter(person=>person.archivedAt&&inScope(person.branch)).map(person=>({person,type:'carer'}))];
+  return hero('Archived records','Restore an archived person or form without losing their history.')+
+    panel('Clients and carers','Archived people are removed from active lists and new work.',
+      table(['Name','Type','Branch','Archived','Action'],rows.map(({person,type})=>[
+        h(person.name),h(type==='client'?'Client':'Carer'),h(person.branch),h(diaryTimestamp(person.archivedAt)),
+        actions(button('Restore','restore-record',type+':'+person.id),button('Open diary','person-diary',type+':'+person.id))
+      ]),'No archived people in this workspace.'))+
+    panel('Form templates','Completed assessments remain available after the form is archived.',
+      table(['Template','Branch','Action'],(db.assessment?.templates??[]).filter(template=>template.archived&&(!template.branch||inScope(template.branch)))
+        .map(template=>[h(template.title),h(template.branch??'All branches'),button('Restore','restore-template',template.id)]),'No archived templates.'));
+}
+function personArchiveEditor(key,restore) {
+  if(!live||actor.role!=='admin') return;
+  const [type,id]=key.split(':');
+  const person=type==='client'?clientById(id):type==='carer'?staffById(id):null;
+  ensure(person&&inScope(person.branch)&&Boolean(person.archivedAt)===restore,'This record is unavailable.');
+  pendingAction={action:restore?'restore-person':'archive-person',id};
+  showEditor((restore?'Restore ':'Archive ')+person.name,hiddenField('type',type)+
+    '<p>'+(restore?'This returns the person to the active lists.':'This removes the person from active lists. Their diary, assessments and evidence are kept.')+'</p>'+
+    (type==='carer'?'<p>HR must clear the carer for work after restoration.</p>':''),()=>{},restore?'Restore record':'Archive record');
+}
+function restoreTemplateEditor(id) {
+  const template=db.assessment?.templates.find(item=>item.id===id&&item.archived);
+  if(actor.role!=='admin'||!template) return;
+  pendingAction={action:'restore-assessment-template',id};
+  showEditor('Restore '+template.title,'<p>This form will be available for new assessments again.</p>',()=>{},'Restore form');
+}
+
 function render() {
   if (!live) {
     $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
@@ -847,20 +880,22 @@ function render() {
   $('#nav').innerHTML = navigation().map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage
+    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage
   }[page]();
 }
 
 function staffEditor(person) {
   if(person) ensure(canHR(person.branch),'HR access is required.');
+  const managerAdd = !person&&actor.role==='manager';
   showEditor(person?'Review onboarding':'Add staff',
     field('Full name','name','required maxlength="80"',person?.name)+
     (person?'':select('Home branch','branch',branchOptions().filter(([branch])=>inScope(branch))))+
-    check('HR checks reviewed','checks',person?.checks)+check('Training reviewed','training',person?.training)+check('Clear for work','cleared',person?.cleared),
+    (managerAdd?'<p class="muted">The carer will be added to your branch. HR or Head Office Admin must clear them before they can be assigned to visits.</p>':
+      check('HR checks reviewed','checks',person?.checks)+check('Training reviewed','training',person?.training)+check('Clear for work','cleared',person?.cleared)),
     data=>{
       const branch = person?.branch ?? data.get('branch');
       const name = data.get('name').trim();
-      ensure(canHR(branch)&&name,'Enter a staff name for an authorised branch.');
+      ensure((canHR(branch)||(managerAdd&&actor.branch===branch))&&name,'Enter a staff name for an authorised branch.');
       const checks = data.has('checks'), training = data.has('training'), cleared = data.has('cleared');
       ensure(!cleared || (checks && training),'Review both HR checks and training before clearing this carer.');
       const next = {id:person?.id??id(),name,branch,checks,training,cleared};
@@ -888,7 +923,7 @@ function clientEditor() {
   });
 }
 function visitEditor() {
-  const clients=db.clients.filter(client=>inScope(client.branch)&&canSchedule(client.branch));
+  const clients=db.clients.filter(client=>inScope(client.branch)&&canSchedule(client.branch)&&!client.archivedAt);
   ensure(clients.length,'Add a client before scheduling a visit.');
   showEditor('Add visit',select('Client','client',clients.map(client=>[client.id,client.branch+' · '+client.name]))+
     field('Date','date','type="date" required',today)+field('Start time','time','type="time" required','09:00')+
@@ -1060,6 +1095,8 @@ $('#view').addEventListener('click',async event=>{
   const visit=visitById(id);
   try {
     const handlers={
+      'archive-record':()=>personArchiveEditor(id,false), 'restore-record':()=>personArchiveEditor(id,true),
+      'restore-template':()=>restoreTemplateEditor(id),
       'calendar-month':()=>moveCalendar(id), 'calendar-day':()=>openCalendarDay(id),
       'calendar-event':()=>calendarEditor(id), 'calendar-history':()=>openCalendarHistory(id),
       'person-diary':()=>openPersonDiary(id), 'add-diary':()=>diaryEditor(), 'diary-follow-up':()=>diaryEditor(id), 'read-diary':()=>viewDiaryEntry(id),

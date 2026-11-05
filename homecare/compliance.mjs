@@ -67,7 +67,7 @@ export function recordCompliance(state,actor,fields,file,requireCondition) {
   const {type,subject,item:key,status,reviewed,due,previous} = fields;
   const person = complianceSubject(state,type,subject);
   const definition = Object.hasOwn(catalog,type) ? catalog[type].find(item=>item.key===key) : null;
-  requireCondition(allowed(actor,type,person,definition),'You do not have access to this checklist item.',403);
+  requireCondition(allowed(actor,type,person,definition)&&!person.archivedAt,'You do not have access to this checklist item.',403);
   requireCondition(['recorded','missing','not-applicable'].includes(status),'Choose a status.');
   const reference = typeof fields.reference==='string' ? fields.reference.trim() : '';
   const notes = typeof fields.notes==='string' ? fields.notes.trim() : '';
