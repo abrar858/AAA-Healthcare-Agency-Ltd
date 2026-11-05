@@ -14,7 +14,7 @@ unset AAA_SETUP_PASSWORD
 node homecare/server.mjs
 ```
 
-Open http://127.0.0.1:4174 and sign in with the account you created. Create branches from **Branch setup**. When setting up a manager or other branch account, use the exact branch name. Read a unique password of at least 14 characters from a password manager or a hidden shell prompt and pass it over standard input as above.
+Open http://127.0.0.1:4174 and sign in with the account you created. Preston, Blackburn and Blackpool are set up automatically. Preston is the main branch and the starting view for Head Office Admin. Admins can switch to any branch or **All branches**, and add locations from **Branch setup**. When setting up a manager or other branch account, use the exact branch name. Read a unique password of at least 14 characters from a password manager or a hidden shell prompt and pass it over standard input as above.
 
 | Account | Arguments after `add-user` |
 | --- | --- |

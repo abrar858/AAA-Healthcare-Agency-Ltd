@@ -49,6 +49,26 @@ if(!db.prepare("PRAGMA table_info('aaa_calendar')").all().some(column=>column.na
 if(!db.prepare("PRAGMA table_info('aaa_actions')").all().some(column=>column.name==='completed_at'))
   db.exec(readFileSync(new URL('./sites/drizzle/0007_aaa_action_completion.sql',import.meta.url),'utf8'));
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
+db.exec(`
+WITH requested(name) AS (VALUES ('Preston'), ('Blackburn'), ('Blackpool'))
+UPDATE workspace
+SET body = json_set(body, '$.branches', json((
+  SELECT json_group_array(name)
+  FROM (
+    SELECT value AS name FROM json_each(workspace.body, '$.branches')
+    UNION ALL
+    SELECT name FROM requested
+    WHERE NOT EXISTS (
+      SELECT 1 FROM json_each(workspace.body, '$.branches') WHERE lower(value) = lower(name)
+    )
+  )
+)))
+WHERE id = 1 AND EXISTS (
+  SELECT 1 FROM requested WHERE NOT EXISTS (
+    SELECT 1 FROM json_each(workspace.body, '$.branches') WHERE lower(value) = lower(name)
+  )
+);
+`);
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
 const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor),reports:reports.reportsView(actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');

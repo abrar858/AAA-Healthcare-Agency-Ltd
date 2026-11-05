@@ -17,7 +17,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments','0007_aaa_action_completion']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments','0007_aaa_action_completion','0008_aaa_homecare_branches']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -55,8 +55,8 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     const access=(user,action,fields,opts)=>request('/api/access',user,{action,fields},opts);
     assert.equal((await request('/api/state')).status,401);
     assert.equal((await request('/api/state',manager)).status,403);
-    assert.equal((await action(owner,'add-branch',{name:'Preston'})).status,200);
-    assert.equal((await action(owner,'add-branch',{name:'Blackburn'})).status,200);
+    assert.deepEqual((await (await request('/api/state',owner)).json()).branches,['Preston','Blackburn','Blackpool']);
+    assert.equal((await action(owner,'add-branch',{name:'preston'})).status,400);
     assert.equal((await access(owner,'save-access',grant,{origin:'https://another.invalid'})).status,403);
     assert.equal((await access(owner,'save-access',{...grant,email:env.AAA_OWNER_EMAIL})).status,400);
     assert.equal((await access(owner,'save-access',{...grant,role:'admin'})).status,400);
@@ -287,7 +287,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.ok(report.finished.some(item=>item.assessment===draftAction.id&&item.category==='Assessment completed'));
     assert.ok(report.recorded.some(item=>item.title==='Care plan'));
     assert.equal(report.recorded.some(item=>item.title.includes('right-to-work')),false);
-    assert.deepEqual((await (await request(reportPath,owner)).json()).branches.map(row=>row.branch),['Preston','Blackburn']);
+    assert.deepEqual((await (await request(reportPath,owner)).json()).branches.map(row=>row.branch),['Preston','Blackburn','Blackpool']);
     assert.equal((await (await request('/api/reports/weekly?date=2000-01-01',manager)).json()).finished.length,0);
     const closure=storage.prepare('SELECT completed_at FROM aaa_actions WHERE source=?').get(source).completed_at;
     const completedFollowup=(await (await request(actionPath,manager)).json()).find(item=>item.source===source);

@@ -38,7 +38,8 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 'use strict';
 const live = null;
 
-const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
+const primaryBranch = 'Preston';
+const initialBranches = [primaryBranch, 'Blackburn', 'Blackpool'];
 const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records', actionList:'Branch action list', backups:'Backups & recovery', people:'People', reports:'Weekly branch review' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
@@ -92,7 +93,11 @@ function load() {
 let db = live?.db ?? load();
 let actor = live?.actor ?? actors()[0];
 let staffAccess = live?.access ?? null;
-let scope = actor.branch ?? 'All branches';
+const primary = () => db.branches.find(branch => branch.toLowerCase() === primaryBranch.toLowerCase());
+const defaultScope = () => actor.branch ?? (actor.role === 'admin' ? primary() : null) ?? 'All branches';
+const launchParams = live ? new URLSearchParams(location.search) : null;
+// Links to a specific record must work across branches for Head Office Admin.
+let scope = !actor.branch && (launchParams?.get('person') || launchParams?.get('source')) ? 'All branches' : defaultScope();
 const navigation = () => {
   const registerPages = live ? [
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
@@ -250,7 +255,7 @@ function accountsPage() {
 function branchPage() {
   return hero('Branch setup','Create a workspace with its own staff directory and branch roles.')+
     panel('AAA Homecare branches','Each branch has its own manager, rota and HR permissions.',
-      table(['Branch','Manager access','Staff'],db.branches.map(branch=>[h(branch),h(live?'Branch manager role':'Branch Manager · '+branch),String(db.staff.filter(person=>person.branch===branch).length)])),
+      table(['Branch','Manager access','Staff'],db.branches.map(branch=>[h(branch)+(branch===primary()?' '+badge('Main branch'):''),h(live?'Branch manager role':'Branch Manager · '+branch),String(db.staff.filter(person=>person.branch===branch).length)])),
       button('Add branch','add-branch','','primary'));
 }
 function branchEditor() {
@@ -1325,7 +1330,7 @@ function recordEditor(visit) {
 
 $('#role').addEventListener('change',event=>{
   actor=actors().find(person=>person.id===event.target.value);
-  scope=actor.branch??'All branches';
+  scope=defaultScope();
   page=roles[actor.role].pages[0];
   notice('');
   render();
@@ -1395,7 +1400,7 @@ $('#editor-form').addEventListener('submit',async event=>{
 });
 $('#reset').addEventListener('click',()=>{
   showEditor('Reset sample data','<p>This removes the changes saved in this browser.</p>',()=>{
-    localStorage.removeItem(key);db=seed();actor=actors()[0];scope='All branches';page='overview';render();notice('Sample data reset.');
+    localStorage.removeItem(key);db=seed();actor=actors()[0];scope=defaultScope();page='overview';render();notice('Sample data reset.');
   },'Reset');
 });
 $('#view').addEventListener('click',async event=>{
@@ -1445,8 +1450,7 @@ if (live) {
 }
 render();
 if(live) {
-  const params=new URLSearchParams(location.search);
-  const source=params.get('source'), person=params.get('person');
+  const source=launchParams.get('source'), person=launchParams.get('person');
   if(person&&db.people) void openPerson(person);
   else if(source) void openActionSource(source).catch(error=>notice(error.message,true));
   else if(page==='actionList') void loadActionList();

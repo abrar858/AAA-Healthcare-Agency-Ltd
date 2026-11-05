@@ -69,8 +69,8 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     assert.match(page.headers.get('content-security-policy'),/script-src 'nonce-/);
     assert.match(await page.text(),/const live = \{"actor":\{"label":"admin"/);
     await action(admin,'add-branch','',{name:'Preston'},403,'https://elsewhere.invalid');
-    await action(admin,'add-branch','',{name:'Preston'});
-    await action(admin,'add-branch','',{name:'Blackburn'});
+    assert.deepEqual((await state(admin)).branches,['Preston','Blackburn','Blackpool']);
+    await action(admin,'add-branch','',{name:'preston'},400);
     provision('preston','manager','Preston');
     provision('blackburn','manager','Blackburn');
     provision('hr','hr','Preston');
