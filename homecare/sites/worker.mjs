@@ -7,7 +7,7 @@ function response(body,status=200,headers={}) {
   }});
 }
 function publicState(state,actor) {
-  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor)};
+  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor),reports:reports.reportsView(actor)};
 }
 const staffRoles=['manager','team_leader','hr','rota','accounts'];
 const denied='This account has no access to the workspace.';
@@ -186,6 +186,18 @@ export default {
         });
       }
       if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      if(path==='/api/reports/weekly'&&request.method==='GET') {
+        domain.requireCondition(reports.reportsView(actor),'You do not have access to branch reports.',403);
+        const {state}=await workspace(env),params=new URL(request.url).searchParams;
+        const branch=params.get('branch')||actor.branch||'';
+        domain.requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
+        const week=reports.reportWeek(params.get('date'),domain.requireCondition);
+        const read=async(sql,args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
+        return json(await reports.weeklyReport({state,actor,branch,week,read,
+          write:(sql,args)=>env.DB.prepare(sql).bind(...args).run(),
+          ownerRows:branchName=>read("SELECT email,label,role,branch FROM aaa_staff_access WHERE enabled=1 AND role IN ('manager','team_leader')"+(branchName?' AND branch=?':''),branchName?[branchName]:[]),
+          compliance,assessment:assessments,actions:actionList}));
+      }
       if(path==='/api/people'&&request.method==='GET') {
         domain.requireCondition(people.peopleView(actor),'You do not have access to people profiles.',403);
         const {state}=await workspace(env), params=new URL(request.url).searchParams;

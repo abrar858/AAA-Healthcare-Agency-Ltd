@@ -70,8 +70,8 @@ export function actionDetails(item,row,owners) {
     ownerName:owner?.label??choices[0].label,ownerUnavailable:Boolean(row&&!owner),
     status:row?.status??'open',version:row?.version??0,choices};
 }
-export const actionRowSql='SELECT source,branch,owner,due,status,version FROM aaa_actions WHERE source=?';
-export const actionRowsSql='SELECT source,branch,owner,due,status,version FROM aaa_actions';
+export const actionRowSql='SELECT source,branch,owner,due,status,version,completed_at FROM aaa_actions WHERE source=?';
+export const actionRowsSql='SELECT source,branch,owner,due,status,version,completed_at FROM aaa_actions';
 export const diaryRowsSql="SELECT d.id,d.type,d.subject,d.branch,d.person,d.category FROM aaa_actions a JOIN aaa_diary d ON a.source='diary:'||d.id";
 export const seedMissingSql="INSERT OR IGNORE INTO aaa_actions(source,branch,owner,due,status,version,changed_by,changed_at) SELECT json_extract(value,'$.source'),json_extract(value,'$.branch'),json_extract(value,'$.owner'),json_extract(value,'$.due'),'open',0,'System',? FROM json_each(?)";
 export function updateAction(item,row,fields,owners,actor,requireCondition) {
@@ -81,8 +81,9 @@ export function updateAction(item,row,fields,owners,actor,requireCondition) {
   requireCondition(status==='open'||(item.source.startsWith('diary:')&&status==='complete'),'Resolve automatic actions at their source.');
   requireCondition(Number(fields.version)===(row?.version??0),'This action has changed. Reload before editing.',409);
   const version=(row?.version??0)+1, changedAt=new Date().toISOString();
+  const completedAt=status==='complete'?(row?.status==='complete'?row.completed_at:changedAt):null;
   const sql=row?
-    'UPDATE aaa_actions SET owner=?,due=?,status=?,version=?,changed_by=?,changed_at=? WHERE source=? AND version=?':
-    'INSERT OR IGNORE INTO aaa_actions(owner,due,status,version,changed_by,changed_at,source,branch) SELECT ?,?,?,?,?,?,?,?';
-  return {sql,args:[owner,due,status,version,actor.label,changedAt,item.source,row?.version??item.branch]};
+    'UPDATE aaa_actions SET owner=?,due=?,status=?,version=?,changed_by=?,changed_at=?,completed_at=? WHERE source=? AND version=?':
+    'INSERT OR IGNORE INTO aaa_actions(owner,due,status,version,changed_by,changed_at,completed_at,source,branch) SELECT ?,?,?,?,?,?,?,?,?';
+  return {sql,args:[owner,due,status,version,actor.label,changedAt,completedAt,item.source,row?.version??item.branch]};
 }

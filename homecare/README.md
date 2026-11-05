@@ -104,3 +104,8 @@ The calendar shows the latest due date for every active compliance item the view
 ### Client and carer profiles
 
 Open **People** on a phone or desktop, search by name or branch, and choose **Open profile**. Documents, assessments, diary entries, appointments and open actions are grouped on one page. Team leaders can read operational compliance evidence for their own branch through these profiles; checklist editing and restricted recruitment evidence keep their existing permissions. Personal calendar events remain visible to their creator. When creating or editing a calendar appointment, select **Linked person** to show it on that profile. Older appointments are not linked automatically.
+
+
+### Weekly branch review
+
+Managers and Head Office Admin can use **Weekly branch review** to see current open work, who owns it, and which items are overdue. Select any date in the week to see that Monday–Sunday period’s completed assessments, diary follow-ups that were closed and remain closed, and evidence updates. The report keeps evidence updates separate from completed work. Older diary actions that predate the recorded closure timestamp have no dated completion history. Managers see their own branch; Head Office Admin can use the branch selector or compare all branches.

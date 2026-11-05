@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { complianceView, permittedCatalog, recordCompliance, complianceCalendar, complianceProfileView } from './compliance.mjs';
 import * as compliance from './compliance.mjs';
 import * as people from './people.mjs';
+import * as reports from './reports.mjs';
 import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
 import * as actionList from './actions.mjs';
 import * as calendar from './calendar.mjs';
@@ -45,9 +46,11 @@ if(!db.prepare("PRAGMA table_info('aaa_calendar')").all().some(column=>column.na
     db.exec('COMMIT');
   } catch(error) {db.exec('ROLLBACK');throw error;}
 }
+if(!db.prepare("PRAGMA table_info('aaa_actions')").all().some(column=>column.name==='completed_at'))
+  db.exec(readFileSync(new URL('./sites/drizzle/0007_aaa_action_completion.sql',import.meta.url),'utf8'));
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
-const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor)});
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor),diary:diary.diaryView(actor),calendar:calendar.calendarView(actor),actions:actionList.actionsView(actor),people:people.peopleView(actor),reports:reports.reportsView(actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -227,6 +230,18 @@ function startServer() {
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
       if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      if(path==='/api/reports/weekly'&&req.method==='GET') {
+        requireCondition(reports.reportsView(actor),'You do not have access to branch reports.',403);
+        const state=readState(),params=new URL(req.url,origin).searchParams;
+        const branch=params.get('branch')||actor.branch||'';
+        requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
+        const week=reports.reportWeek(params.get('date'),requireCondition);
+        const read=(sql,args)=>db.prepare(sql).all(...args);
+        return json(res,200,await reports.weeklyReport({state,actor,branch,week,read,
+          write:(sql,args)=>db.prepare(sql).run(...args),
+          ownerRows:branchName=>read("SELECT email,label,role,branch FROM users WHERE enabled=1 AND role IN ('manager','team_leader')"+(branchName?' AND branch=?':''),branchName?[branchName]:[]),
+          compliance,assessment:{assessmentView},actions:actionList}));
+      }
       if(path==='/api/people'&&req.method==='GET') {
         requireCondition(people.peopleView(actor),'You do not have access to people profiles.',403);
         const state=readState(), params=new URL(req.url,origin).searchParams;

@@ -17,7 +17,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments','0007_aaa_action_completion']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -276,6 +276,24 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal(savedFollowup.ownerName,leader.label);
     assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:reviewed,status:'complete',version:savedFollowup.version})).status,200);
     assert.equal((await (await request(actionPath,manager)).json()).find(item=>item.source===source).status,'complete');
+    const reportPath='/api/reports/weekly?date='+reviewed;
+    assert.equal((await request(reportPath,'leader')).status,403);
+    assert.equal((await request(reportPath+'&branch=Blackburn',manager)).status,403);
+    assert.equal((await request('/api/reports/weekly?date=2099-03-01',manager)).status,400);
+    const report=await (await request(reportPath,manager)).json();
+    assert.deepEqual(report.branches.map(row=>row.branch),['Preston']);
+    assert.ok(report.open.some(item=>item.ownerName));
+    assert.ok(report.finished.some(item=>item.source===source&&item.category==='Diary follow-up closed'));
+    assert.ok(report.finished.some(item=>item.assessment===draftAction.id&&item.category==='Assessment completed'));
+    assert.ok(report.recorded.some(item=>item.title==='Care plan'));
+    assert.equal(report.recorded.some(item=>item.title.includes('right-to-work')),false);
+    assert.deepEqual((await (await request(reportPath,owner)).json()).branches.map(row=>row.branch),['Preston','Blackburn']);
+    assert.equal((await (await request('/api/reports/weekly?date=2000-01-01',manager)).json()).finished.length,0);
+    const closure=storage.prepare('SELECT completed_at FROM aaa_actions WHERE source=?').get(source).completed_at;
+    const completedFollowup=(await (await request(actionPath,manager)).json()).find(item=>item.source===source);
+    assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:'2099-01-01',status:'complete',version:completedFollowup.version})).status,200);
+    assert.equal(storage.prepare('SELECT completed_at FROM aaa_actions WHERE source=?').get(source).completed_at,closure);
+
     assert.equal((await request('/api/backups',manager)).status,403);
     assert.equal((await request('/api/backups',owner,{}, {origin:'https://wrong.invalid'})).status,403);
     assert.equal((await request('/api/backup-job',null,{})).status,403);
@@ -326,7 +344,8 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     await env.BUCKET.put('compliance/'+item.id,new TextEncoder().encode(atob(pdf)));
     const legacyEnv={...env,DB:{...env.DB,batch:async queries=>(await env.DB.batch(queries)).map((table,index)=>
       ['aaa_calendar','aaa_calendar_history'].includes(backupTables[index])?
-        {...table,results:table.results.map(({subject_type,subject_id,...row})=>row)}:table)}};
+        {...table,results:table.results.map(({subject_type,subject_id,...row})=>row)}:backupTables[index]==='aaa_actions'?
+        {...table,results:table.results.map(({completed_at,...row})=>row)}:table)}};
     const legacyBackup=await takeBackup(legacyEnv,'manual');
     const legacyArchive=join(target,'legacy-backup.tar');
     writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id)).arrayBuffer()));
