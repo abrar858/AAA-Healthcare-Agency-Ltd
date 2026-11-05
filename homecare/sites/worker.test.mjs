@@ -75,6 +75,13 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     const pdf=btoa('%PDF-1.7\nExample upload');
     const item=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:'',status:'recorded',reviewed,pdf})).json()).compliance[0];
     const file='/api/compliance-pdf/'+item.id;
+    const reviewFields={type:'client',subject:client.id,item:'care-plan',previous:item.id,
+      status:'recorded',reviewed:'2000-01-31',reviewMonths:'1',keepPdf:'on'};
+    assert.equal((await action(manager,'save-compliance',{...reviewFields,reviewMonths:'-1'})).status,400);
+    const carried=(await (await action(manager,'save-compliance',reviewFields)).json()).compliance[0];
+    assert.equal(carried.due,'2000-02-29');
+    assert.equal(carried.pdfSource,item.id);
+    assert.equal(carried.hasPdf,false);
     assert.equal(await (await request(file,manager)).text(),atob(pdf));
     const other={...grant,email:'other@example.invalid',label:'Blackburn Manager',branch:'Blackburn'};
     assert.equal((await access(owner,'save-access',other)).status,200);
@@ -137,7 +144,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await request('/api/diary?type=client&branch=Blackburn','manager')).status,403);
     const calendar='/api/calendar';
     const carePlanSource='compliance:client:'+client.id+':care-plan';
-    const review=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:item.id,status:'recorded',reviewed,due:'2099-01-10',reference:'Fictional review'})).json()).compliance[0];
+    const review=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:carried.id,status:'recorded',reviewed,due:'2099-01-10',reference:'Fictional review'})).json()).compliance[0];
     const firstReview=(await (await request(calendar+'?month=2099-01',manager)).json()).events.find(event=>event.source===carePlanSource);
     assert.equal(firstReview.start_at,'2099-01-10');
     assert.equal(firstReview.canEdit,false);
@@ -209,7 +216,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.ok(work.some(row=>row.title==='Care plan'&&row.category==='Overdue review'&&row.due==='2000-01-02'));
     assert.ok((await (await request(calendar+'?month=2000-01',manager)).json()).reminders.some(event=>event.source===carePlanSource));
     const latest=(await (await request('/api/state',manager)).json()).compliance.find(row=>row.type==='client'&&row.subject===client.id&&row.item==='care-plan');
-    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:latest.id,status:'recorded',reviewed,reference:'Fictional review without due date'})).status,200);
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:latest.id,status:'recorded',reviewed,reviewMonths:'0',reference:'Fictional review without due date'})).status,200);
     const cleared=await (await request(calendar+'?month=2000-01',manager)).json();
     assert.equal([...cleared.events,...cleared.reminders].some(event=>event.source===carePlanSource),false);
 
@@ -258,6 +265,9 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await request('/api/people?branch=Blackburn','leader')).status,403);
     const profile=await (await request(clientProfile,'leader')).json();
     assert.equal(profile.person.patch,'Central');
+    assert.ok(profile.checklist.some(row=>row.key==='telephone-review'&&row.reviewMonths===3&&row.history.length===0));
+    assert.ok(profile.checklist.find(row=>row.key==='care-plan').history.some(row=>row.id===carried.id));
+    assert.equal((await action('leader','save-compliance',{...reviewFields,previous:carried.id})).status,403);
     assert.ok(profile.documents.some(doc=>doc.item==='care-plan'&&doc.files.some(pdf=>pdf.id===item.id)));
     assert.equal(await (await request(file,'leader')).text(),atob(pdf));
     assert.ok(profile.assessments.some(record=>record.completedAt));

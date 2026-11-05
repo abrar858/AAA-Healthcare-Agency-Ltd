@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-const item = (key, label, optional = false, restricted = false) => ({key,label,optional,restricted});
+const item = (key, label, optional = false, restricted = false, options = {}) => ({key,label,optional,restricted,...options});
 export const catalog = {
   client: [
     item('assessment','Initial assessment and agreed care package'),
@@ -8,17 +8,29 @@ export const catalog = {
     item('care-plan','Care plan'),
     item('cpli','CPLI'),
     item('risks','Risk assessments'),
-    item('consent','Consent record'),
+    item('consent','Consent to care and treatment'),
+    item('media-consent','Consent to media',true),
+    item('best-interest','Best-interest decision (where required)',true),
+    item('lpa-finance','Lasting power of attorney for finance',true),
+    item('lpa-health','Lasting power of attorney for health and welfare',true),
     item('capacity','Mental capacity and best interests records',true),
     item('emergency','Emergency and contingency arrangements'),
-    item('prescription','Current prescription or medicines list',true),
+    item('prescription','Prescription review / current medicines list',true),
     item('mar','MAR charts / eMAR evidence',true),
     item('medication-risk','Medication support assessment and instructions',true),
     item('specialist','Specialist care instructions',true),
     item('visit-notes','Daily care notes and visit records'),
-    item('care-plan-audit','Care plan audit',true),
-    item('medication-audit','Medication audit',true),
-    item('review','Care review and evaluation')
+    item('care-plan-audit','Care plan audit',true,false,{reviewMonths:6}),
+    item('medication-audit','Medication audit',true,false,{reviewMonths:1}),
+    item('moving-audit','Moving and handling audit',true,false,{reviewMonths:3}),
+    item('review','Care plan review and evaluation',false,false,{reviewMonths:6}),
+    item('manager-final-check','Registered Manager final check (QCS-CA14)',true),
+    item('rota-scheduled','Rota scheduled',true,false,{evidenceOptional:true}),
+    item('self-medication-risk','Self-administration of medication risk assessment (QCS-CM03)',true,false,{reviewMonths:6}),
+    item('service-agreement','Service level agreement / commissioning confirmation',true),
+    item('telephone-review','Telephone quality review (QCS-QQ16)',true,false,{reviewMonths:3}),
+    item('updated-cpli','Updated CPLI',true),
+    item('updated-cpli-2','Updated CPLI 2',true)
   ],
   carer: [
     item('identity','Identity and right-to-work evidence',false,true),
@@ -63,8 +75,15 @@ function validDate(value) {
   const parsed = new Date(value+'T00:00:00Z');
   return Number.isFinite(+parsed) && parsed.toISOString().startsWith(value);
 }
+function addReviewMonths(date, months) {
+  const value = new Date(date+'T00:00:00Z');
+  const day = value.getUTCDate();
+  value.setUTCMonth(value.getUTCMonth()+months+1,0);
+  value.setUTCDate(Math.min(day,value.getUTCDate()));
+  return value.toISOString().slice(0,10);
+}
 export function recordCompliance(state,actor,fields,file,requireCondition) {
-  const {type,subject,item:key,status,reviewed,due,previous} = fields;
+  const {type,subject,item:key,status,reviewed,previous} = fields;
   const person = complianceSubject(state,type,subject);
   const definition = Object.hasOwn(catalog,type) ? catalog[type].find(item=>item.key===key) : null;
   requireCondition(allowed(actor,type,person,definition)&&!person.archivedAt,'You do not have access to this checklist item.',403);
@@ -75,18 +94,24 @@ export function recordCompliance(state,actor,fields,file,requireCondition) {
   state.compliance ??= [];
   const current = state.compliance.find(entry=>entry.type===type&&entry.subject===subject&&entry.item===key);
   requireCondition((current?.id ?? '')===previous,'Another user updated this item. Refresh the page and try again.',409);
+  const reviewMonths = type==='client' ? Number(fields.reviewMonths ?? current?.reviewMonths ?? definition.reviewMonths ?? 0) : 0;
+  requireCondition(Number.isInteger(reviewMonths)&&reviewMonths>=0&&reviewMonths<=60,'Enter a review interval from 0 to 60 months.');
+  const pdfSource = type==='client' && !file && status==='recorded' && fields.keepPdf==='on'
+    ? (current?.hasPdf ? current.id : current?.pdfSource) : undefined;
+  let due = fields.due;
   requireCondition(!file || status==='recorded','Attach evidence only to a recorded item.');
   if (status === 'recorded') {
     requireCondition(validDate(reviewed)&&reviewed<=todayUK(),'Enter the date the evidence was reviewed.');
+    if (!due && reviewMonths) due = addReviewMonths(reviewed,reviewMonths);
     requireCondition(!due||(validDate(due)&&due>=reviewed),'Next review cannot be before the review date.');
-    requireCondition(reference || file,'Attach a PDF or enter a reference to the existing evidence.');
+    requireCondition(reference || file || pdfSource || definition.evidenceOptional,'Attach a PDF or enter a reference to the existing evidence.');
   } else if (status === 'not-applicable') {
     requireCondition(definition.optional && notes,'Explain why this item does not apply.');
   }
   const entry = {
     id:randomUUID(),type,subject,item:key,status,reviewed:status==='recorded'?reviewed:null,
     due:status==='recorded'&&due?due:null,reference:status==='recorded'?reference:'',
-    notes,hasPdf:Boolean(file),by:actor.label,at:new Date().toISOString()
+    ...(type==='client'?{reviewMonths,manualDue:Boolean(fields.due)&&status==='recorded'}:{}),notes,hasPdf:Boolean(file),pdfSource,by:actor.label,at:new Date().toISOString()
   };
   state.compliance.unshift(entry);
   return entry;

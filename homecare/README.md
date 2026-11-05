@@ -109,3 +109,9 @@ Open **People** on a phone or desktop, search by name or branch, and choose **Op
 ### Weekly branch review
 
 Managers and Head Office Admin can use **Weekly branch review** to see current open work, who owns it, and which items are overdue. Select any date in the week to see that Monday–Sunday period’s completed assessments, diary follow-ups that were closed and remain closed, and evidence updates. The report keeps evidence updates separate from completed work. Older diary actions that predate the recorded closure timestamp have no dated completion history. Managers see their own branch; Head Office Admin can use the branch selector or compare all branches.
+
+### Client dashboard
+
+Open **People** or **Clients & patches**, then choose **Open dashboard**. The client dashboard separates the checklist, diary, schedule, care plans, medication evidence, assessments, tasks and checklist activity. The roster and recorded visit notes are visible to Head Office Admin and branch managers.
+
+The checklist shows every standard item, including items awaiting an applicability decision. Head Office Admin and the assigned branch manager can update it. Team leaders can view their branch's checklists and history. When recording a review, set the interval in months and leave the due-date override blank to calculate the date automatically. This date appears in the compliance calendar. Use zero months for an item without a repeating interval.

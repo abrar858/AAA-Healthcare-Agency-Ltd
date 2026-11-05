@@ -37,7 +37,11 @@ export function personAutomaticActions(items,person,assessments) {
 
 export async function personProfile({state,actor,key,person,read,write,ownerRows,compliance,assessment,actions,diary,calendar,requireCondition}) {
   const records=personAssessmentRecords(assessment.assessmentView(state,actor),person);
-  const evidence=profileDocuments(compliance.complianceProfileView(state,actor),compliance.catalog,person);
+  const entries=compliance.complianceProfileView(state,actor);
+  const evidence=profileDocuments(entries,compliance.catalog,person);
+  const checklist=person.type==='client' ? compliance.catalog.client.map(definition=>({
+    ...definition,history:entries.filter(entry=>entry.type==='client'&&entry.subject===person.id&&entry.item===definition.key)
+  })) : undefined;
   const query=diary.diaryListQuery(state,actor,new URLSearchParams({branch:person.branch,type:person.type,subject:person.id}),requireCondition);
   const [diaryRows,appointmentRows,actionRows,manualRows,staff]=await Promise.all([
     read(query.sql,query.values),
@@ -57,7 +61,7 @@ export async function personProfile({state,actor,key,person,read,write,ownerRows
   const open=[...automatic,...manualRows.map(row=>actions.diaryAction(state,actor,row)).filter(Boolean)]
     .map(item=>actions.actionDetails(item,rows.get(item.source),owners)).filter(item=>item.status==='open')
     .sort((a,b)=>a.due.localeCompare(b.due)).map(({choices,...item})=>item);
-  return {person,documents:evidence,assessments:records,diary:diary.diaryList(diaryRows),
+  return {person,documents:evidence,checklist,assessments:records,diary:diary.diaryList(diaryRows),
     appointments:appointmentRows.slice(0,30).map(row=>calendar.calendarEntry(actor,key,row)),
     moreAppointments:appointmentRows.length>30,actions:open};
 }
