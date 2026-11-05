@@ -17,17 +17,32 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments','0007_aaa_action_completion','0008_aaa_homecare_branches']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders','0003_aaa_diary','0004_aaa_calendar','0005_aaa_actions','0006_aaa_person_appointments','0007_aaa_action_completion','0008_aaa_homecare_branches','0009_aaa_access_log']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
     const env={AAA_ORIGIN:'https://aaa.example.invalid',AAA_OWNER_EMAIL:'owner@example.invalid',AAA_BACKUP_ENCRYPTION_KEY:'42'.repeat(32),AAA_BACKUP_SERVICE_KEY:'test-backup-secret-never-production',
-      DB:{batch:async statements=>Promise.all(statements.map(statement=>statement.all())),prepare(sql){
+      DB:{async batch(statements){
+        storage.exec('BEGIN');
+        try {
+          const result=statements.map(statement=>statement.executeBatch());
+          storage.exec('COMMIT');
+          return result;
+        } catch(error) {
+          storage.exec('ROLLBACK');
+          throw error;
+        }
+      },prepare(sql){
         const statement=storage.prepare(sql);
         const bound=(...args)=>({
           first:async()=>statement.get(...args),
           run:async()=>({meta:statement.run(...args)}),
-          all:async()=>({results:statement.all(...args)})
+          all:async()=>({results:statement.all(...args)}),
+          executeBatch:()=>{
+            const results=statement.all(...args);
+            const meta=storage.prepare('SELECT changes() AS changes').get();
+            return {results,meta};
+          }
         });
         return {...bound(),bind:bound};
       }},
@@ -127,6 +142,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     const personDiary='/api/diary?type=client&subject='+client.id;
     assert.equal((await request(personDiary,'other')).status,403);
     assert.equal((await request('/api/diary?entry='+entry.id,'other')).status,404);
+    assert.equal((await request('/api/diary?entry='+entry.id,manager)).status,200);
     const clientLog=await (await request(personDiary,'manager')).json();
     assert.equal(clientLog.entries[0].occurred_time,'10:30');
     assert.equal(clientLog.entries[0].author,leader.label);
@@ -324,7 +340,8 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal(made.status,201);
     const saved=await made.json();
     assert.equal(saved.documents,1);
-    assert.equal(saved.tables,6);
+    assert.equal(saved.tables,7);
+    const backupAuditRows=storage.prepare('SELECT * FROM aaa_access_log').all();
     assert.ok(saved.verifiedAt);
     const retry=await (await request('/api/backup-job',null,{}, {headers:scheduledHeaders})).json();
     assert.equal(retry.id,saved.id);
@@ -357,6 +374,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
       assert.ok(body.clients.every(item=>item.branch==='Preston'));
       assert.equal(body.compliance.some(item=>item.item==='identity'),false);
       assert.equal(branchDb.prepare('SELECT COUNT(*) AS total FROM aaa_staff_access').get().total,0);
+      assert.equal(branchDb.prepare('SELECT COUNT(*) AS total FROM aaa_access_log').get().total,0);
       assert.equal(branchDb.prepare("SELECT COUNT(*) AS total FROM aaa_calendar WHERE branch<>'Preston'").get().total,0);
       assert.equal(branchDb.prepare('SELECT id FROM aaa_calendar WHERE id=?').get(otherPrivate),undefined);
     } finally {branchDb.close();}
@@ -377,7 +395,8 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal(restoreBackup(archive,recovery,recoveryKey).documents,1);
     const restored=new DatabaseSync(join(recovery,'aaa-homecare.sqlite'),{readOnly:true});
     try {
-      for(const table of backupTables) assert.deepEqual(restored.prepare('SELECT * FROM '+table).all(),storage.prepare('SELECT * FROM '+table).all());
+      for(const table of backupTables) assert.deepEqual(restored.prepare('SELECT * FROM '+table).all(),
+        table==='aaa_access_log'?backupAuditRows:storage.prepare('SELECT * FROM '+table).all());
       assert.equal(restored.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
     } finally {restored.close();}
     assert.equal(readFileSync(join(recovery,'documents','compliance',item.id+'.pdf'),'utf8'),atob(pdf));
@@ -405,12 +424,14 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
         {...table,results:table.results.map(({completed_at,...row})=>row)}:table)}};
     const legacyBackup=await takeBackup(legacyEnv,'manual');
     const legacyArchive=join(target,'legacy-backup.tar');
-    writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id,recoveryKey)).arrayBuffer()));
+    const withoutAccessLog=({aaa_access_log,...legacy})=>legacy;
+    writeFileSync(legacyArchive,Buffer.from(await new Response(await openBackup(legacyEnv,legacyBackup.id,recoveryKey,withoutAccessLog)).arrayBuffer()));
     const legacyTarget=join(target,'legacy-restored');
     assert.equal(restoreBackup(legacyArchive,legacyTarget,recoveryKey).documents,1);
     const legacyDatabase=new DatabaseSync(join(legacyTarget,'aaa-homecare.sqlite'),{readOnly:true});
     try {
       assert.equal(legacyDatabase.prepare('SELECT subject_id FROM aaa_calendar WHERE id=?').get(carerEvent).subject_id,null);
+      assert.equal(legacyDatabase.prepare('SELECT COUNT(*) AS total FROM aaa_access_log').get().total,0);
     } finally {legacyDatabase.close();}
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
@@ -419,6 +440,34 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await request(personDiary,manager)).status,403);
     assert.equal((await access(owner,'save-access',{...grant,version:revoked.version})).status,200);
     assert.equal((await request('/api/state',manager)).status,200);
+    const audit='/api/access-log';
+    assert.equal((await request(audit)).status,401);
+    for(const user of [manager,'leader','other']) assert.equal((await request(audit,user)).status,403);
+    assert.equal((await request(audit+'?before=1e3',owner)).status,400);
+    const latestAudit=(await (await request(audit,owner)).json());
+    assert.equal(latestAudit.entries.length,50);
+    const older=(await (await request(audit+'?before='+latestAudit.nextBefore,owner)).json());
+    assert.ok(older.entries.length>0&&older.entries.every(row=>row.id<latestAudit.entries.at(-1).id));
+    const auditEvents=storage.prepare('SELECT * FROM aaa_access_log').all();
+    assert.equal(auditEvents.filter(row=>row.action==='staff_access_granted'&&row.target_id===grant.email).length,1);
+    assert.ok(auditEvents.some(row=>row.action==='staff_access_revoked'&&row.target_id===grant.email&&row.actor_email===env.AAA_OWNER_EMAIL));
+    assert.ok(auditEvents.some(row=>row.action==='client_profile_viewed'&&row.branch==='Preston'&&row.target_id===client.id));
+    assert.ok(auditEvents.some(row=>row.action==='backup_download_started'&&row.actor_role==='manager'&&row.branch==='Preston'));
+    assert.ok(auditEvents.some(row=>row.action==='compliance_pdf_download_started'&&row.target_id===item.id));
+    assert.ok(auditEvents.some(row=>row.action==='assessment_viewed'));
+    assert.ok(auditEvents.some(row=>row.action==='diary_entry_viewed'));
+    assert.equal(auditEvents.some(row=>row.action==='client_profile_viewed'&&row.actor_email==='other@example.invalid'),false);
+    assert.ok(auditEvents.some(row=>row.action==='access_log_viewed'&&row.actor_email===env.AAA_OWNER_EMAIL));
+    assert.equal(JSON.stringify(auditEvents).includes(recoveryKey),false);
+
+    storage.exec("CREATE TRIGGER reject_audit_test BEFORE INSERT ON aaa_access_log BEGIN SELECT RAISE(ABORT,'test'); END;");
+    try {
+      assert.equal((await access(owner,'save-access',{...grant,email:'rollback@example.invalid'})).status,500);
+      assert.equal(storage.prepare("SELECT email FROM aaa_staff_access WHERE email='rollback@example.invalid'").get(),undefined);
+      assert.equal((await request(clientProfile,manager)).status,500);
+    } finally {
+      storage.exec('DROP TRIGGER reject_audit_test');
+    }
   } finally {
     storage.close();
     rmSync(target,{recursive:true,force:true});

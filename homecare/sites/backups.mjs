@@ -1,7 +1,7 @@
 const prefix='backups/v1/';
 const encoder=new TextEncoder(), decoder=new TextDecoder('utf-8',{fatal:true});
 const maxMetadata=16*1024*1024, maxDocument=5*1024*1024;
-export const backupTables=['aaa_workspace','aaa_staff_access','aaa_diary','aaa_calendar','aaa_calendar_history','aaa_actions'];
+export const backupTables=['aaa_workspace','aaa_staff_access','aaa_diary','aaa_calendar','aaa_calendar_history','aaa_actions','aaa_access_log'];
 export const validBackupId=id=>typeof id==='string'&&/^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id);
 export const validDocumentPath=path=>typeof path==='string'&&/^documents\/compliance\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.pdf$/.test(path);
 const shaPattern=/^[a-f0-9]{64}$/;
@@ -37,7 +37,8 @@ async function readPart(bucket,key,id,path,limit) {
   return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:packed.subarray(0,12),additionalData:partData(id,path)},key,packed.subarray(12)));
 }
 export function snapshotDocuments(snapshot) {
-  requireBackup(snapshot&&backupTables.every(name=>Array.isArray(snapshot[name]))&&Object.keys(snapshot).length===backupTables.length,'Unexpected backup tables.');
+  requireBackup(snapshot&&backupTables.every(name=>Array.isArray(snapshot[name])||
+    (name==='aaa_access_log'&&!Object.hasOwn(snapshot,name)))&&Object.keys(snapshot).every(name=>backupTables.includes(name)),'Unexpected backup tables.');
   requireBackup(snapshot.aaa_workspace.length===1&&snapshot.aaa_workspace[0].id===1,'Workspace record is missing.');
   const workspace=JSON.parse(snapshot.aaa_workspace[0].body);
   requireBackup(workspace&&Array.isArray(workspace.clients)&&Array.isArray(workspace.staff),'Workspace record is invalid.');

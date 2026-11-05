@@ -19,7 +19,7 @@ async function authenticate(request,env) {
   const email=request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
   domain.requireCondition(id && email,'Sign in to continue.',401);
   domain.requireCondition(env.AAA_OWNER_EMAIL,'Workspace sign-in is unavailable.',503);
-  if (email===env.AAA_OWNER_EMAIL) return {calendarKey:id,actor:{label:'Head Office Admin',role:'admin',branch:null,staff:null}};
+  if (email===env.AAA_OWNER_EMAIL) return {calendarKey:id,actorEmail:email,actor:{label:'Head Office Admin',role:'admin',branch:null,staff:null}};
   let member=await memberOf(env,email);
   domain.requireCondition(member?.enabled && member.role!=='carer' && (!member.identity_id || member.identity_id===id),denied,403);
   if (!member.identity_id) {
@@ -28,13 +28,33 @@ async function authenticate(request,env) {
   }
   domain.requireCondition(member?.enabled && member.role!=='carer' && member.identity_id===id,denied,403);
   const {label,role,branch,staff,version}=member;
-  return {calendarKey:id,actor:{label,role,branch,staff},membership:{email,id,version}};
+  return {calendarKey:id,actorEmail:email,actor:{label,role,branch,staff},membership:{email,id,version}};
+}
+const auditColumns='id,occurred_at,actor_email,actor_label,actor_role,action,branch,target_id';
+function auditStatement(env,{actor,actorEmail},action,branch=null,target=null,afterChange=false) {
+  return env.DB.prepare('INSERT INTO aaa_access_log (occurred_at,actor_email,actor_label,actor_role,action,branch,target_id) '+
+    'SELECT ?,?,?,?,?,?,?'+(afterChange?' WHERE changes()=1':''))
+    .bind(new Date().toISOString(),actorEmail,actor.label,actor.role,action,branch,target);
+}
+async function recordAccess(env,auth,action,branch,target) {
+  await auditStatement(env,auth,action,branch,target).run();
+}
+async function readAccessLog(env,auth,params) {
+  const cursor=params.get('before');
+  const before=cursor===null?null:Number(cursor);
+  domain.requireCondition(cursor===null||(/^\d+$/.test(cursor)&&Number.isSafeInteger(before)&&before>0),'Invalid access log cursor.');
+  const query='SELECT '+auditColumns+' FROM aaa_access_log'+(before===null?'':' WHERE id < ?')+' ORDER BY id DESC LIMIT 51';
+  const statement=env.DB.prepare(query);
+  const {results}=await (before===null?statement:statement.bind(before)).all();
+  const entries=results.slice(0,50);
+  await recordAccess(env,auth,'access_log_viewed');
+  return json({entries,nextBefore:results.length>50?entries.at(-1).id:null});
 }
 async function staffAccess(env) {
   const list=await env.DB.prepare('SELECT email,label,role,branch,staff,enabled,version,updated_at FROM aaa_staff_access ORDER BY enabled DESC, label COLLATE NOCASE, email').all();
   return list.results;
 }
-async function changeAccess(request,env) {
+async function changeAccess(request,env,auth) {
   domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
   const body=await readJson(request,12000);
   const fields=body?.fields;
@@ -43,13 +63,17 @@ async function changeAccess(request,env) {
   domain.requireCondition(email!==env.AAA_OWNER_EMAIL,'The site owner’s access is managed separately.');
   const version=Number(fields.version), at=new Date().toISOString();
   domain.requireCondition(Number.isSafeInteger(version) && version>=0,'Invalid access version.');
-  let result;
+  let mutation, event, branch;
   if (body.action==='revoke-access') {
-    result=await env.DB.prepare('UPDATE aaa_staff_access SET enabled=0,version=version+1,updated_at=? WHERE email=? AND version=? AND enabled=1').bind(at,email,version).run();
+    branch=(await memberOf(env,email))?.branch;
+    event='staff_access_revoked';
+    mutation=env.DB.prepare('UPDATE aaa_staff_access SET enabled=0,version=version+1,updated_at=? WHERE email=? AND version=? AND enabled=1').bind(at,email,version);
   } else {
     domain.requireCondition(body.action==='save-access','Invalid access action.');
     const label=typeof fields.label==='string'?fields.label.trim():'';
-    const {role,branch}=fields;
+    const {role}=fields;
+    branch=fields.branch;
+    event=version===0?'staff_access_granted':'staff_access_updated';
     const {state}=await workspace(env);
     domain.requireCondition(label && label.length<=100 && staffRoles.includes(role) && state.branches.includes(branch),'Enter a name, role and existing branch.');
     const staff=role==='carer'?fields.staff:null;
@@ -59,13 +83,14 @@ async function changeAccess(request,env) {
       domain.requireCondition(!existing,'This carer already has an active login.',409);
     }
     if(version===0) {
-      result=await env.DB.prepare('INSERT OR IGNORE INTO aaa_staff_access (email,label,role,branch,staff,updated_at) VALUES (?,?,?,?,?,?)')
-        .bind(email,label,role,branch,staff,at).run();
+      mutation=env.DB.prepare('INSERT OR IGNORE INTO aaa_staff_access (email,label,role,branch,staff,updated_at) VALUES (?,?,?,?,?,?)')
+        .bind(email,label,role,branch,staff,at);
     } else {
-      result=await env.DB.prepare('UPDATE OR IGNORE aaa_staff_access SET label=?,role=?,branch=?,staff=?,enabled=1,version=version+1,updated_at=? WHERE email=? AND version=?')
-        .bind(label,role,branch,staff,at,email,version).run();
+      mutation=env.DB.prepare('UPDATE OR IGNORE aaa_staff_access SET label=?,role=?,branch=?,staff=?,enabled=1,version=version+1,updated_at=? WHERE email=? AND version=?')
+        .bind(label,role,branch,staff,at,email,version);
     }
   }
+  const [result]=await env.DB.batch([mutation,auditStatement(env,auth,event,branch??null,email,true)]);
   domain.requireCondition(result.meta.changes===1,'This access entry changed. Refresh the page and try again.',409);
   return json(await staffAccess(env));
 }
@@ -165,7 +190,8 @@ function managerBackupSnapshot(snapshot,{actor,calendarKey},current,visibleEvent
     aaa_diary:snapshot.aaa_diary.filter(entry=>local(entry)&&visibleSubject(entry.type,entry.subject)),
     aaa_calendar:events.map(event=>({...event,owner_key:event.owner_key===calendarKey?calendarKey:''})),
     aaa_calendar_history:[],
-    aaa_actions:[]
+    aaa_actions:[],
+    aaa_access_log:[]
   };
 }
 
@@ -228,25 +254,39 @@ export default {
             scopeSnapshot=snapshot=>managerBackupSnapshot(snapshot,auth,state,visibleEventIds);
           }
           const stream=await backups.openBackup(env,id,key,scopeSnapshot,isManager?actor.branch:null);
+          await recordAccess(env,auth,'backup_download_started',actor.branch,id);
           return response(stream,200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="AAA-Homecare-'+(isManager?'Branch-':'')+id+'.aaa.tar"'});
         }
         return json({error:'Page not found.'},404);
       }
+      if(path==='/api/access-log'&&request.method==='GET') {
+        domain.requireCondition(actor.role==='admin'&&!auth.membership,'Only Head Office Admin can view the access log.',403);
+        return await readAccessLog(env,auth,new URL(request.url).searchParams);
+      }
       if (path==='/api/access') {
         domain.requireCondition(!auth.membership,'Only the site owner can manage access.',403);
-        if (request.method==='GET') return json(await staffAccess(env));
-        if (request.method==='POST') return await changeAccess(request,env);
+        if (request.method==='GET') {
+          const entries=await staffAccess(env);
+          await recordAccess(env,auth,'staff_access_viewed');
+          return json(entries);
+        }
+        if (request.method==='POST') return await changeAccess(request,env,auth);
       }
       if (request.method==='GET' && path==='/') {
         const {state}=await workspace(env);
         const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor),site:true,backupAccess:actor.role==='admin'||actor.role==='manager',access:auth.membership?null:await staffAccess(env)}).replaceAll('<','\\u003c');
+        await recordAccess(env,auth,'workspace_viewed',actor.branch);
         const nonce=crypto.randomUUID().replaceAll('-','');
         return response(html.replace('<script>','<script nonce="'+nonce+'">').replace('const live = null;',()=> 'const live = '+app+';'),200,{
           'Content-Type':'text/html; charset=utf-8',
           'Content-Security-Policy':"default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
         });
       }
-      if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      if (request.method==='GET' && path==='/api/state') {
+        const state=publicState((await workspace(env)).state,actor);
+        await recordAccess(env,auth,'workspace_viewed',actor.branch);
+        return json(state);
+      }
       if(path==='/api/reports/weekly'&&request.method==='GET') {
         domain.requireCondition(reports.reportsView(actor),'You do not have access to branch reports.',403);
         const {state}=await workspace(env),params=new URL(request.url).searchParams;
@@ -254,24 +294,32 @@ export default {
         domain.requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
         const week=reports.reportWeek(params.get('date'),domain.requireCondition);
         const read=async(sql,args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
-        return json(await reports.weeklyReport({state,actor,branch,week,read,
+        const report=await reports.weeklyReport({state,actor,branch,week,read,
           write:(sql,args)=>env.DB.prepare(sql).bind(...args).run(),
           ownerRows:branchName=>read("SELECT email,label,role,branch FROM aaa_staff_access WHERE enabled=1 AND role IN ('manager','team_leader')"+(branchName?' AND branch=?':''),branchName?[branchName]:[]),
-          compliance,assessment:assessments,actions:actionList}));
+          compliance,assessment:assessments,actions:actionList});
+        await recordAccess(env,auth,'weekly_report_viewed',branch||null);
+        return json(report);
       }
       if(path==='/api/people'&&request.method==='GET') {
         domain.requireCondition(people.peopleView(actor),'You do not have access to people profiles.',403);
         const {state}=await workspace(env), params=new URL(request.url).searchParams;
         const branch=params.get('branch')||actor.branch||'';
         domain.requireCondition(!branch||(state.branches.includes(branch)&&(!actor.branch||actor.branch===branch)),'You do not have access to this branch.',403);
-        if(!params.has('id')) return json(people.profileDirectory(state,actor,branch));
+        if(!params.has('id')) {
+          const directory=people.profileDirectory(state,actor,branch);
+          await recordAccess(env,auth,'people_directory_viewed',branch||null);
+          return json(directory);
+        }
         const person=people.profilePerson(state,actor,params.get('type'),params.get('id'));
         domain.requireCondition(person&&(!branch||person.branch===branch),'Person not found.',404);
         const read=async(sql,args)=>(await env.DB.prepare(sql).bind(...args).all()).results;
-        return json(await people.personProfile({state,actor,key:auth.calendarKey,person,read,
+        const profile=await people.personProfile({state,actor,key:auth.calendarKey,person,read,
           write:(sql,args)=>env.DB.prepare(sql).bind(...args).run(),
           ownerRows:branchName=>read("SELECT email,label,role,branch FROM aaa_staff_access WHERE enabled=1 AND role IN ('manager','team_leader') AND branch=?",[branchName]),
-          compliance,assessment:assessments,actions:actionList,diary,calendar,requireCondition:domain.requireCondition}));
+          compliance,assessment:assessments,actions:actionList,diary,calendar,requireCondition:domain.requireCondition});
+        await recordAccess(env,auth,person.type==='client'?'client_profile_viewed':'carer_profile_viewed',person.branch,person.id);
+        return json(profile);
       }
       if (path==='/api/actions') {
         domain.requireCondition(actionList.actionsView(actor),'You do not have access to the action list.',403);
@@ -289,7 +337,9 @@ export default {
             domain.requireCondition(source.startsWith('diary:'),'Invalid diary follow-up.');
             const item=actionList.diaryAction(state,actor,await env.DB.prepare(diary.diaryEntrySql).bind(source.slice(6)).first());
             domain.requireCondition(item&&(!branch||item.branch===branch),'This action is unavailable.',404);
-            return json(actionList.actionDetails(item,await env.DB.prepare(actionList.actionRowSql).bind(source).first(),owners));
+            const detail=actionList.actionDetails(item,await env.DB.prepare(actionList.actionRowSql).bind(source).first(),owners);
+            await recordAccess(env,auth,'action_viewed',item.branch,item.source);
+            return json(detail);
           }
           const auto=automatic();
           const rowScope=branch?' WHERE branch=?':'';
@@ -305,7 +355,9 @@ export default {
           }
           const diaryRows=(await env.DB.prepare(actionList.diaryRowsSql+(branch?' WHERE d.branch=?':'')).bind(...args).all()).results;
           const manual=diaryRows.map(row=>actionList.diaryAction(state,actor,row)).filter(Boolean);
-          return json([...auto,...manual].map(item=>actionList.actionDetails(item,rows.get(item.source),owners)));
+          const items=[...auto,...manual].map(item=>actionList.actionDetails(item,rows.get(item.source),owners));
+          await recordAccess(env,auth,'action_list_viewed',branch||null);
+          return json(items);
         }
         if(request.method==='POST') {
           domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
@@ -334,11 +386,14 @@ export default {
           if(params.has('history')) {
             const row=await env.DB.prepare(calendar.calendarReadSql).bind(params.get('history')).first();
             domain.requireCondition(calendar.canReadCalendar(actor,key,row)&&row.owner_key===key,'Calendar history not found.',404);
-            return json((await env.DB.prepare(calendar.calendarHistorySql).bind(row.id).all()).results);
+            const history=(await env.DB.prepare(calendar.calendarHistorySql).bind(row.id).all()).results;
+            await recordAccess(env,auth,'calendar_history_viewed',row.branch,row.id);
+            return json(history);
           }
           const query=calendar.calendarQuery(state,actor,key,params,domain.requireCondition);
           const result=await Promise.all([query.events,query.reminders].map(item=>env.DB.prepare(item.sql).bind(...item.args).all()));
           const [events,reminders]=result.map(queryResult=>queryResult.results.map(row=>calendar.calendarEntry(actor,key,row)));
+          await recordAccess(env,auth,'calendar_viewed',query.branch||null);
           return json(calendar.calendarPayload(events,reminders,compliance.complianceCalendar(state,actor,query)));
         }
         if(request.method==='POST') {
@@ -364,10 +419,13 @@ export default {
           if(params.has('entry')) {
             const record=await env.DB.prepare(diary.diaryEntrySql).bind(params.get('entry')).first();
             domain.requireCondition(diary.canReadDiaryEntry(actor,record),'Diary entry not found.',404);
+            await recordAccess(env,auth,'diary_entry_viewed',record.branch,record.id);
             return json(record);
           }
           const query=diary.diaryListQuery(state,actor,params,domain.requireCondition);
-          return json(diary.diaryList((await env.DB.prepare(query.sql).bind(...query.values).all()).results));
+          const entries=diary.diaryList((await env.DB.prepare(query.sql).bind(...query.values).all()).results);
+          await recordAccess(env,auth,'diary_list_viewed',params.get('branch')||actor.branch,params.get('subject')||null);
+          return json(entries);
         }
         if (request.method==='POST') {
           domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
@@ -391,6 +449,7 @@ export default {
         domain.requireCondition(record,'Assessment not found.',404);
         const preview=new URL(request.url).searchParams.get('view')==='1';
         const nonce=preview?crypto.randomUUID().replaceAll('-',''):'';
+        await recordAccess(env,auth,preview?'assessment_viewed':'assessment_downloaded',record.branch,record.id);
         return response(assessments.assessmentDocument(record,nonce),200,{
           'Content-Type':'text/html; charset=utf-8',
           'Content-Disposition':preview?'inline':'attachment; filename="aaa-assessment-'+record.id+'.html"',
@@ -403,6 +462,8 @@ export default {
         const entry=compliance.complianceProfileView(state,actor).find(item=>item.id===pdfId && item.hasPdf);
         const file=entry && await env.BUCKET.get('compliance/'+pdfId);
         domain.requireCondition(file,'Document not found.',404);
+        const subject=compliance.complianceSubject(state,entry.type,entry.subject);
+        await recordAccess(env,auth,'compliance_pdf_download_started',subject?.branch??null,pdfId);
         return response(file.body,200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="compliance-evidence.pdf"'});
       }
       if (request.method==='POST' && ['/api/action','/api/compliance'].includes(path)) return await update(request,env,auth,path==='/api/compliance');

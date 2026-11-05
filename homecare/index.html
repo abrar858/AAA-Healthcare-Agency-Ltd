@@ -72,7 +72,7 @@ const live = null;
 
 const primaryBranch = 'Preston';
 const initialBranches = [primaryBranch, 'Blackburn', 'Blackpool'];
-const pages = { overview:'Dashboard', rota:'Rota', staff:'Carers', clients:'Clients', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records', actionList:'Branch action list', backups:'Backups & recovery', people:'People', reports:'Weekly branch review' };
+const pages = { overview:'Dashboard', rota:'Rota', staff:'Carers', clients:'Clients', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', accessLog:'Access log', assessments:'Assessments', diary:'Diary', calendar:'Calendar', archived:'Archived records', actionList:'Branch action list', backups:'Backups & recovery', people:'People', reports:'Weekly branch review' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
@@ -136,7 +136,7 @@ const navigation = () => {
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  const available = [...(db.actions?['actionList']:[]),...(db.people?['people']:[]),...(db.reports?['reports']:[]),...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access']:[]),...(live?.backupAccess?['backups']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
+  const available = [...(db.actions?['actionList']:[]),...(db.people?['people']:[]),...(db.reports?['reports']:[]),...registerPages,...(db.assessment?['assessments']:[]),...(db.diary?['diary']:[]),...(db.calendar?['calendar']:[]),...(staffAccess?['access','accessLog']:[]),...(live?.backupAccess?['backups']:[]),...(live&&actor.role==='admin'?['archived']:[]),...roles[actor.role].pages];
   return [...mainPages.filter(name=>available.includes(name)),...available.filter(name=>!mainPages.includes(name))];
 };
 let page = navigation()[0];
@@ -1094,6 +1094,48 @@ $('#view').addEventListener('submit',event=>{
 });
 
 
+const auditLabels={
+  workspace_viewed:'Opened workspace records',people_directory_viewed:'Viewed people directory',
+  client_profile_viewed:'Opened client profile',carer_profile_viewed:'Opened carer profile',
+  diary_entry_viewed:'Viewed diary entry',diary_list_viewed:'Viewed diary',
+  assessment_viewed:'Viewed assessment',assessment_downloaded:'Downloaded assessment',
+  compliance_pdf_download_started:'Started evidence PDF download',backup_download_started:'Started encrypted backup download',
+  calendar_viewed:'Viewed calendar',calendar_history_viewed:'Viewed calendar history',
+  weekly_report_viewed:'Viewed weekly branch review',action_viewed:'Viewed action',action_list_viewed:'Viewed action list',
+  access_log_viewed:'Viewed access log',staff_access_viewed:'Viewed staff access',staff_access_granted:'Granted staff access',
+  staff_access_updated:'Updated staff access',staff_access_revoked:'Revoked staff access'
+};
+let auditEntries=[], auditNext=null, auditBefore=null, auditLoading=false, auditError='', auditRequest=0;
+async function loadAccessLog(before=null) {
+  const request=++auditRequest;
+  auditLoading=true;auditError='';render();
+  try {
+    const response=await fetch('/api/access-log'+(before?'?before='+encodeURIComponent(before):''));
+    if(response.status===401) {location.assign('/signin-with-chatgpt?return_to=%2F');return;}
+    const data=await response.json();
+    if(!response.ok) throw new Error(data.error);
+    if(request!==auditRequest) return;
+    auditEntries=data.entries;auditNext=data.nextBefore;auditBefore=before;
+  } catch(error) {
+    if(request===auditRequest) auditError=error.message;
+  } finally {
+    if(request===auditRequest) {auditLoading=false;if(page==='accessLog') render();}
+  }
+}
+function accessLogPage() {
+  const content=auditLoading?'<p class="empty" role="status">Loading access log…</p>':
+    auditError?'<p class="empty assessment-error" role="alert">'+h(auditError)+'</p>':
+      table(['Date and time (UK)','Account','Role','Action','Branch','Reference'],auditEntries.map(entry=>[
+        h(diaryTimestamp(entry.occurred_at)),h(entry.actor_label)+'<br><small>'+h(entry.actor_email)+'</small>',
+        h(roles[entry.actor_role]?.label??entry.actor_role),h(auditLabels[entry.action]??entry.action),
+        h(entry.branch??'—'),h(entry.target_id??'—')
+      ]),'No access events have been recorded.',true);
+  return hero('Access log','Review who accessed sensitive records or changed staff access.')+
+    panel('Access events','Head Office Admin only. Entries are recorded from the date this log was enabled.',
+      '<div class="client-checklist">'+content+'</div>',auditLoading?'':actions(
+        button(auditBefore?'Back to latest':'Refresh','audit-page'),auditNext&&button('Older events','audit-page',auditNext)));
+}
+
 let backupItems=[],backupLoading=false,backupError='';
 async function loadBackups() {
   backupLoading=true;backupError='';render();
@@ -1383,7 +1425,7 @@ function render() {
     (extra.length?'<details'+(moreOpen||extra.includes(selectedPage)?' open':'')+'><summary>More</summary><div class="nav-more">'+extra.map(navButton).join('')+'</div></details>':'');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage,actionList:actionListPage,backups:backupsPage,people:peoplePage,reports:weeklyReportPage
+    accessLog:accessLogPage,clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage,diary:diaryPage,calendar:calendarPage,archived:archivePage,actionList:actionListPage,backups:backupsPage,people:peoplePage,reports:weeklyReportPage
   }[page]();
 }
 
@@ -1531,10 +1573,10 @@ $('#role').addEventListener('change',event=>{
   notice('');
   render();
 });
-$('#branch').addEventListener('change',event=>{scope=event.target.value;if(page==='people'&&personKey) page=personDirectory();personResult=null;personKey='';personLoading=false;personError='';++personRequest;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;actionFilters.owner='';actionFilters.page=0;notice('');if(page==='overview'&&db.calendar) void loadDashboard(); else if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else if(page==='reports') void loadWeeklyReport(); else render();});
+$('#branch').addEventListener('change',event=>{scope=event.target.value;if(page==='people'&&personKey) page=personDirectory();personResult=null;personKey='';personLoading=false;personError='';++personRequest;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();diaryFilters.subject='';diaryFilters.page=0;actionFilters.owner='';actionFilters.page=0;notice('');if(page==='overview'&&db.calendar) void loadDashboard(); else if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else if(page==='accessLog') void loadAccessLog(); else if(page==='reports') void loadWeeklyReport(); else render();});
 $('#nav').addEventListener('click',event=>{
   const target=event.target.closest('[data-page]');
-  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;if(page==='people') {personKey='';personResult=null;personLoading=false;personError='';++personRequest;}notice('');if(page==='overview'&&db.calendar) void loadDashboard(); else if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else if(page==='reports') void loadWeeklyReport(); else render();}
+  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;if(page==='people') {personKey='';personResult=null;personLoading=false;personError='';++personRequest;}notice('');if(page==='overview'&&db.calendar) void loadDashboard(); else if(page==='diary') void loadDiary(); else if(page==='calendar') void loadCalendar(); else if(page==='actionList') void loadActionList(); else if(page==='backups') void loadBackups(); else if(page==='accessLog') void loadAccessLog(); else if(page==='reports') void loadWeeklyReport(); else render();}
 });
 $('#editor-cancel').addEventListener('click',()=>$('#editor').close());
 async function sendAction(action, id, fields = {}) {
@@ -1611,6 +1653,7 @@ $('#view').addEventListener('click',async event=>{
       'report-open-page':()=>{reportOpenPage=Number(id)||0;render();},
       'profile-tab':()=>{profileTab=id;render();$('#view .profile-tabs [aria-current="page"]')?.focus();},
       'open-person':()=>openPerson(id), 'person-directory':()=>{page=personDirectory();backToPeople();}, 'profile-appointment':()=>calendarEditor(id,personResult?.person),
+      'audit-page':()=>loadAccessLog(id||null),
       'create-backup':createBackupNow,'download-backup':()=>openBackupDownload(id),
       'edit-action-item':()=>editExistingAction(id), 'diary-action-item':()=>editDiaryAction(id),
       'action-list-page':()=>moveActionPage(id),

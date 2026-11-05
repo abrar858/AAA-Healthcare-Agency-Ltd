@@ -96,12 +96,12 @@ export function restoreBackup(archive,destination,recoveryKey=process.env.AAA_BA
     const dbPath=join(output,'aaa-homecare.sqlite');
     writeFileSync(dbPath,'',{mode:0o600,flag:'wx'});
     db=new DatabaseSync(dbPath);
-    for(const file of readdirSync(migrations).filter(name=>/^000[0-7]_.*\.sql$/.test(name)).sort()) db.exec(readFileSync(join(migrations,file),'utf8'));
+    for(const file of readdirSync(migrations).filter(name=>/^000[0-79]_.*\.sql$/.test(name)).sort()) db.exec(readFileSync(join(migrations,file),'utf8'));
     db.exec('BEGIN; PRAGMA defer_foreign_keys=ON; DELETE FROM aaa_workspace;');
     for(const name of backupTables) {
       const columns=db.prepare('PRAGMA table_info('+name+')').all().map(column=>column.name);
       const insert=db.prepare('INSERT INTO '+name+' ('+columns.join(',')+') VALUES ('+columns.map(()=>'?').join(',')+')');
-      for(const row of snapshot[name]) {
+      for(const row of snapshot[name]??[]) {
         const added=(name==='aaa_calendar'||name==='aaa_calendar_history')?['subject_type','subject_id']:name==='aaa_actions'?['completed_at']:[];
         requireBackup(row&&Object.keys(row).every(column=>columns.includes(column))&&columns.every(column=>Object.hasOwn(row,column)||added.includes(column)),
           'Database columns do not match the recovery schema.');
@@ -111,7 +111,7 @@ export function restoreBackup(archive,destination,recoveryKey=process.env.AAA_BA
     db.exec('COMMIT;');
     requireBackup(db.prepare('PRAGMA integrity_check').get().integrity_check==='ok'&&db.prepare('PRAGMA foreign_key_check').all().length===0,'Database integrity check failed.');
     writeFileSync(join(output,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{mode:0o600,flag:'wx'});
-    return {id:manifest.id,...(manifest.branch?{branch:manifest.branch}:{}),tables:backupTables.length,documents:paths.length};
+    return {id:manifest.id,...(manifest.branch?{branch:manifest.branch}:{}),tables:Object.keys(snapshot).length,documents:paths.length};
   } catch(error) {
     if(db) {db.close();db=null;}
     if(created) rmSync(output,{recursive:true,force:true});
