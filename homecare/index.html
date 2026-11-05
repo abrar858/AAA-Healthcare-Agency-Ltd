@@ -51,8 +51,7 @@ const actors = () => [
     {id:'rota-'+branch,role:'rota',branch},
     {id:'accounts-'+branch,role:'accounts',branch}
   ]),
-  {id:'carer-s1',role:'carer',branch:'Preston',staff:'s1',label:'Carer · Alex Reed'},
-  {id:'carer-s4',role:'carer',branch:'Blackburn',staff:'s4',label:'Carer · Sam Ellis'}
+  ...db.staff.map(person => ({id:'carer-'+person.id,role:'carer',branch:person.branch,staff:person.id,label:'Carer · '+person.name}))
 ];
 const key = 'aaa-homecare-preview-v1';
 const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
