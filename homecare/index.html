@@ -20,10 +20,10 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 <div class="brand"><span class="mark" aria-hidden="true">A</span> AAA Homecare</div>
 <label for="branch">Branch workspace<select id="branch"></select></label>
 <nav id="nav" class="nav" aria-label="Main navigation"></nav>
-<div class="sidefoot"><small>Fictional records · browser only</small><button type="button" class="small" id="reset">Reset sample data</button></div>
+<div class="sidefoot"><small id="mode-note">Fictional records · browser only</small><button type="button" class="small" id="reset">Reset sample data</button></div>
 </aside>
 <main>
-<header class="topbar"><span class="env">● Interactive demo</span><label for="role">Preview as<select id="role"></select></label></header>
+<header class="topbar"><span class="env" id="mode-label">● Interactive demo</span><label for="role">Preview as<select id="role"></select></label><form id="logout" method="post" action="/logout" hidden><button type="submit">Sign out</button></form></header>
 <div class="content"><p id="notice" class="notice" role="status"></p><div id="view"></div></div>
 </main>
 </div>
@@ -32,6 +32,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 </dialog>
 <script>
 'use strict';
+const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
 const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review' };
@@ -55,7 +56,7 @@ const actors = () => [
 ];
 const key = 'aaa-homecare-preview-v1';
 const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-const id = () => crypto.randomUUID();
+const id = () => Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const h = escapeHtml;
@@ -83,11 +84,13 @@ function seed() {
 function load() {
   try { return JSON.parse(localStorage.getItem(key)) ?? seed(); } catch { return seed(); }
 }
-let db = load();
-let actor = actors()[0];
-let scope = 'All branches';
-let page = 'overview';
+let db = live?.db ?? load();
+let actor = live?.actor ?? actors()[0];
+let scope = actor.branch ?? 'All branches';
+let page = roles[actor.role].pages[0];
 let saveAction;
+let pendingAction;
+let saving = false;
 
 const staffById = staff => db.staff.find(person => person.id === staff);
 const clientById = client => db.clients.find(person => person.id === client);
@@ -97,7 +100,7 @@ const canAccess = branch => !actor.branch || actor.branch === branch;
 const canSchedule = branch => ['admin','manager','rota'].includes(actor.role) && canAccess(branch);
 const canRequestCover = branch => ['admin','manager'].includes(actor.role) && canAccess(branch);
 const canHR = branch => ['admin','hr'].includes(actor.role) && canAccess(branch);
-const eligible = person => person?.cleared && person.training && person.checks;
+const eligible = person => person?.cleared && (person.eligibilityOnly || (person.training && person.checks));
 const actorLabel = person => person.label || [roles[person.role].label,person.branch].filter(Boolean).join(' · ');
 const branchOptions = () => db.branches.filter(canAccess).map(branch => [branch,branch]);
 const inVisit = (visit,staff) => visit.assignments.some(item => item.staff === staff);
@@ -186,7 +189,7 @@ function rotaPage() {
       h(visit.assignments.length+' / '+visit.required)+'<br><small class="muted">'+h(visit.assignments.map(item=>staffById(item.staff)?.name).join(', '))+'</small>',
       badge(...visitStatus(visit)),
       actions(openVisit(visit)&&button('Allocate','allocate',visit.id),openVisit(visit)&&canRequestCover(visit.branch)&&button('Request cover','request',visit.id),
-        visit.assignments.some(item=>item.minutes!==undefined)&&button('Visit record','visit-record',visit.id),
+        (!live||actor.role!=='rota')&&visit.assignments.some(item=>item.minutes!==undefined)&&button('Visit record','visit-record',visit.id),
         !visit.cancelled&&!visit.assignments.some(item=>item.minutes!==undefined)&&button('Cancel','cancel-visit',visit.id,'small danger'))
     ])),button('Add visit','add-visit','','primary'));
 }
@@ -198,7 +201,7 @@ function coverPage() {
       const pending = request.status==='Pending';
       const approver = actor.role==='manager' && actor.branch===request.from;
       const admin = actor.role==='admin';
-      return [h(clientById(visit.client)?.name)+'<br><small class="muted">'+h(when(visit))+'</small>',h(request.to),h(request.from),h(staffById(request.staff)?.name),
+      return [h(clientById(visit.client)?.name??'Cover visit')+'<br><small class="muted">'+h(when(visit))+'</small>',h(request.to),h(request.from),h(staffById(request.staff)?.name),
         badge(request.status,pending?'warn':request.status.startsWith('Approved')?'ok':''),actions(
           pending&&approver&&button('Approve','approve',request.id),
           pending&&admin&&button('Authorise urgent cover','urgent',request.id),
@@ -229,9 +232,9 @@ function accountsPage() {
     panel('Recorded visit time','Each row represents one carer’s completed allocation.',table(['Visit time','Visit branch','Carer','Home branch','Actual time'],rows));
 }
 function branchPage() {
-  return hero('Branch setup','Create a workspace with its own manager and staff directory.')+
-    panel('AAA Homecare branches','Each branch has its own manager, rota and HR demo views.',
-      table(['Branch','Manager access','Staff'],db.branches.map(branch=>[h(branch),h('Branch Manager · '+branch),String(db.staff.filter(person=>person.branch===branch).length)])),
+  return hero('Branch setup','Create a workspace with its own staff directory and branch roles.')+
+    panel('AAA Homecare branches','Each branch has its own manager, rota and HR permissions.',
+      table(['Branch','Manager access','Staff'],db.branches.map(branch=>[h(branch),h(live?'Branch manager role':'Branch Manager · '+branch),String(db.staff.filter(person=>person.branch===branch).length)])),
       button('Add branch','add-branch','','primary'));
 }
 function branchEditor() {
@@ -245,8 +248,10 @@ function branchEditor() {
 }
 
 function render() {
-  $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
-  $('#role').value = actor.id;
+  if (!live) {
+    $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
+    $('#role').value = actor.id;
+  }
   $('#branch').innerHTML = opts(actor.branch?[[actor.branch,actor.branch]]:[['All branches','All branches'],...branchOptions()]);
   $('#branch').value = scope;
   $('#branch').disabled = Boolean(actor.branch);
@@ -317,7 +322,8 @@ function available(person,visit) {
 function allocateEditor(visit,cover) {
   const permitted = cover ? canRequestCover : canSchedule;
   ensure(visit&&permitted(visit.branch)&&openVisit(visit),'This visit has no open allocation.');
-  const people=db.staff.filter(person=>available(person,visit)&&(cover?person.branch!==visit.branch:person.branch===visit.branch));
+  const directory=cover && db.coverCandidates ? db.coverCandidates : db.staff;
+  const people=directory.filter(person=>available(person,visit)&&(cover?person.branch!==visit.branch:person.branch===visit.branch));
   ensure(people.length,cover?'No cleared carers in another branch are available.':'No cleared carers in this branch are available.');
   showEditor(cover?'Request cross-branch cover':'Allocate carer',
     select('Carer','staff',people.map(person=>[person.id,person.name+' · '+person.branch])),
@@ -381,7 +387,7 @@ function recordEditor(visit) {
   const assignment=visit?.assignments.find(item=>item.staff===actor.staff);
   ensure(actor.role==='carer'&&visit&&!visit.cancelled&&assignment&&assignment.minutes===undefined,'This visit is unavailable to record.');
   showEditor('Record visit',field('Actual minutes','minutes','required type="number" min="1" max="720"',visit.minutes)+
-    '<label>Visit note<textarea name="note" required maxlength="500" placeholder="Use fictional information only."></textarea></label>',data=>{
+    '<label>Visit note<textarea name="note" required maxlength="500" placeholder="Describe the visit"></textarea></label>',data=>{
       const minutes=Number(data.get('minutes')), note=data.get('note').trim();
       ensure(Number.isInteger(minutes)&&minutes>=1&&minutes<=720&&note,'Enter actual minutes and a visit note.');
       assignment.minutes=minutes;
@@ -403,20 +409,45 @@ $('#nav').addEventListener('click',event=>{
   if(target&&roles[actor.role].pages.includes(target.dataset.page)) {page=target.dataset.page;notice('');render();}
 });
 $('#editor-cancel').addEventListener('click',()=>$('#editor').close());
-$('#editor-form').addEventListener('submit',event=>{
+async function sendAction(action, id, fields = {}) {
+  if (saving) return false;
+  saving = true;
+  $('#editor-submit').disabled = true;
+  try {
+    const response = await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action,id,fields})});
+    if (response.status===401) {location.assign('/login');return false;}
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    db = result;
+    render();
+    notice('Change saved.');
+    return true;
+  } finally {
+    saving = false;
+    $('#editor-submit').disabled = false;
+  }
+}
+$('#editor-form').addEventListener('submit',async event=>{
   event.preventDefault();
-  try {saveAction(new FormData(event.target));$('#editor').close();}
-  catch(error) {$('#editor-error').textContent=error.message;}
+  const fields = new FormData(event.target);
+  try {
+    if (live && pendingAction?.action!=='visit-record') {
+      if (!await sendAction(pendingAction.action,pendingAction.id,Object.fromEntries(fields))) return;
+    } else saveAction(fields);
+    $('#editor').close();
+  } catch(error) {$('#editor-error').textContent=error.message;}
 });
 $('#reset').addEventListener('click',()=>{
   showEditor('Reset sample data','<p>This removes the changes saved in this browser.</p>',()=>{
     localStorage.removeItem(key);db=seed();actor=actors()[0];scope='All branches';page='overview';render();notice('Sample data reset.');
   },'Reset');
 });
-$('#view').addEventListener('click',event=>{
+$('#view').addEventListener('click',async event=>{
   const target=event.target.closest('[data-action]');
   if(!target) return;
   const {action,id}=target.dataset;
+  pendingAction = {action,id};
   const visit=visitById(id);
   try {
     const handlers={
@@ -425,10 +456,20 @@ $('#view').addEventListener('click',event=>{
       allocate:()=>allocateEditor(visit,false),request:()=>allocateEditor(visit,true),
       'cancel-visit':()=>cancelEditor(visit),'visit-record':()=>visitRecord(visit),record:()=>recordEditor(visit)
     };
-    if(['approve','urgent','decline','withdraw'].includes(action)) decideCover(db.requests.find(item=>item.id===id),action);
-    else handlers[action]?.();
+    if(['approve','urgent','decline','withdraw'].includes(action)) {
+      if (live) await sendAction(action,id);
+      else decideCover(db.requests.find(item=>item.id===id),action);
+    } else handlers[action]?.();
   } catch(error) {notice(error.message,true);}
 });
+if (live) {
+  $('label[for="role"]').hidden = true;
+  $('label[for="role"]').style.display = 'none';
+  $('#reset').hidden = true;
+  $('#logout').hidden = false;
+  $('#mode-label').textContent = actor.label+' · '+roles[actor.role].label;
+  $('#mode-note').textContent = 'AAA Homecare workspace';
+}
 render();
 </script>
 </body>
