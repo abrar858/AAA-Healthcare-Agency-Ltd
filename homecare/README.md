@@ -94,3 +94,8 @@ node homecare/sites/restore-backup.mjs /path/to/AAA-Homecare-backup.tar /path/to
 The command checks file hashes and database-to-PDF references, refuses to overwrite an existing folder, and restores `aaa-homecare.sqlite` and `documents/compliance/` together. It applies the hosted schema and runs SQLite integrity checks. This does not change the live portal. In a real incident, validate an isolated recovery before an authorised operator reimports the tables and PDFs into the original hosting environment. Upload each recovered PDF under its original object key, for example `compliance/<id>` without the local file extension. A different Site uses different sign-in identities and needs an access and calendar ownership migration before cutover.
 
 The private backup job at `POST /api/backup-job` accepts the current Sites service credential in the dispatch and backup headers. It returns only a verification summary and reuses a successful scheduled copy for that UTC day. Store the service credential and encryption key as runtime secrets. A change to the encryption key requires a backup migration or prior portable exports. No automatic retention deletion is configured.
+
+
+### Compliance dates in the calendar
+
+The calendar shows the latest due date for every active compliance item the viewer is allowed to read. These entries appear under the combined or branch calendar views, are marked **From compliance**, and link to the checklist item. Change or clear the date in that item to move or remove the entry automatically. Reviews due today or earlier also appear in **Reminders due**. These are in-portal reminders.

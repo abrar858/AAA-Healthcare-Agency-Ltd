@@ -721,7 +721,7 @@ let calendarMonth=today.slice(0,7), calendarDay='', calendarMode='all';
 let calendarResult={events:[],reminders:[]}, calendarLoading=false, calendarError='', calendarRequest=0;
 const calendarModes=[['all','My events and branch events'],['mine','My events'],['branch','Branch-shared events']];
 const calendarStatuses=[['scheduled','Scheduled'],['completed','Completed'],['cancelled','Cancelled']];
-const calendarTime=value=>value?displayDate(value.slice(0,10))+' · '+value.slice(11):'—';
+const calendarTime=value=>value?displayDate(value.slice(0,10))+(value.length>10?' · '+value.slice(11):''):'—';
 const calendarEventById=id=>calendarResult.events.find(event=>event.id===id)??calendarResult.reminders.find(event=>event.id===id);
 async function fetchCalendar(params) {
   const response=await fetch('/api/calendar?'+new URLSearchParams(params));
@@ -764,10 +764,14 @@ function calendarPage() {
   const options=opts(calendarModes).replace('value="'+calendarMode+'"','value="'+calendarMode+'" selected');
   const visible=calendarResult.events.filter(event=>!calendarDay||event.start_at.startsWith(calendarDay));
   const card=event=>'<article class="assessment-card"><strong>'+h(event.title)+'</strong><small>'+h(event.kind+' · '+event.branch+' · '+calendarTime(event.start_at))+'</small>'+
-    '<div>'+badge(event.audience==='private'?'Personal':'Branch shared')+' '+badge(calendarStatuses.find(([key])=>key===event.status)?.[1],event.status==='cancelled'?'bad':'')+'</div>'+
-    actions(button(event.canEdit?'Open / edit':'View','calendar-event',event.id),event.mine&&button('History','calendar-history',event.id))+'</article>';
-  const reminders=calendarLoading?'':calendarResult.reminders.length?panel('Reminders due','Open an event to review it or mark it completed.',
-    '<div class="assessment-body assessment-grid">'+calendarResult.reminders.map(card).join('')+'</div>'):'';
+    '<div>'+badge(event.source?'From compliance':event.audience==='private'?'Personal':'Branch shared')+' '+
+    (event.source?(event.start_at<today?badge('Overdue','bad'):''):badge(calendarStatuses.find(([key])=>key===event.status)?.[1],event.status==='cancelled'?'bad':''))+'</div>'+
+    (event.source?actions('<a href="/?source='+encodeURIComponent(event.source)+'">Open compliance record</a>'):
+      actions(button(event.canEdit?'Open / edit':'View','calendar-event',event.id),event.mine&&button('History','calendar-history',event.id)))+'</article>';
+  const more=calendarResult.additionalComplianceReminders;
+  const reminders=calendarLoading||calendarError?'':calendarResult.reminders.length?panel('Reminders due','For an automatic review, update the date in the linked compliance record.',
+    '<div class="assessment-body assessment-grid">'+calendarResult.reminders.map(card).join('')+'</div>'+
+    (more?'<p class="empty">'+more+' more compliance reminders. Open the <button type="button" class="small" data-action="show-action-list">Branch action list</button> to review overdue items.</p>':'')):'';
   const grid='<div class="calendar-grid" aria-label="Month view">'+['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(day=>'<span class="weekday">'+day+'</span>').join('')+
     '<span></span>'.repeat(lead)+Array.from({length:days},(_,index)=>{
       const day=calendarMonth+'-'+String(index+1).padStart(2,'0');
@@ -778,7 +782,7 @@ function calendarPage() {
   const agenda=calendarLoading?'<p role="status">Loading calendar…</p>':calendarError?'<p role="alert" class="assessment-error">'+h(calendarError)+'</p>':
     visible.length?'<div class="assessment-grid">'+visible.map(card).join('')+'</div>':'<p class="muted">No events in this selection.</p>';
   return hero('Calendar','Keep appointments, reviews and reminders in your own calendar or share them with your branch.')+
-    reminders+panel(monthTitle,'All event times use UK local time.',
+    reminders+panel(monthTitle,'Review dates come from the compliance registers. Timed events use UK local time.',
       '<div class="assessment-body"><div class="calendar-tools">'+button('Previous month','calendar-month','-1')+
       button('This month','calendar-month','today')+button('Next month','calendar-month','1')+
       '<label>Show <select id="calendar-mode">'+options+'</select></label>'+
@@ -1252,6 +1256,7 @@ $('#view').addEventListener('click',async event=>{
       'action-list-page':()=>moveActionPage(id),
       'archive-record':()=>personArchiveEditor(id,false), 'restore-record':()=>personArchiveEditor(id,true),
       'restore-template':()=>restoreTemplateEditor(id),
+      'show-action-list':()=>{page='actionList';void loadActionList();},
       'calendar-month':()=>moveCalendar(id), 'calendar-day':()=>openCalendarDay(id),
       'calendar-event':()=>calendarEditor(id), 'calendar-history':()=>openCalendarHistory(id),
       'person-diary':()=>openPersonDiary(id), 'add-diary':()=>diaryEditor(), 'diary-follow-up':()=>diaryEditor(id), 'read-diary':()=>viewDiaryEntry(id),

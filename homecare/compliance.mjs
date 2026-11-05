@@ -91,3 +91,27 @@ export function recordCompliance(state,actor,fields,file,requireCondition) {
   state.compliance.unshift(entry);
   return entry;
 }
+
+// Calendar entries are projections of the current checklist version, not copied events.
+export function complianceCalendar(state,actor,{branch,filter,month,today}) {
+  const events=[], reminders=[];
+  if(filter==='mine') return {events,reminders};
+  const seen=new Set();
+  for(const entry of complianceView(state,actor)) {
+    const key=[entry.type,entry.subject,entry.item].join(':');
+    if(seen.has(key)) continue;
+    seen.add(key);
+    if(entry.status!=='recorded'||!validDate(entry.due)) continue;
+    if(!entry.due.startsWith(month+'-')&&entry.due>today) continue;
+    const person=complianceSubject(state,entry.type,entry.subject);
+    if(person.archivedAt||(branch&&person.branch!==branch)) continue;
+    const definition=catalog[entry.type].find(item=>item.key===entry.item);
+    const source='compliance:'+key;
+    const event={id:source,source,title:definition.label+' review · '+person.name,
+      branch:person.branch,kind:'Compliance review',start_at:entry.due,reminder_at:entry.due,
+      audience:'branch',status:'scheduled',mine:false,canEdit:false};
+    if(entry.due.startsWith(month+'-')) events.push(event);
+    if(entry.due<=today) reminders.push(event);
+  }
+  return {events,reminders};
+}

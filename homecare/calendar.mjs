@@ -22,7 +22,8 @@ function localDateTime() {
 }
 export function calendarQuery(state,actor,key,params,requireCondition) {
   const branch=params.get('branch')||actor.branch||'';
-  const month=params.get('month')||localDateTime().slice(0,7);
+  const now=localDateTime();
+  const month=params.get('month')||now.slice(0,7);
   const filter=params.get('view')||'all';
   requireCondition(calendarView(actor)&&inBranch(actor,branch),'You do not have access to this calendar.',403);
   requireCondition((!branch||state.branches.includes(branch))&&/^\d{4}-(0[1-9]|1[0-2])$/.test(month)&&['all','mine','branch'].includes(filter),'Invalid calendar filter.');
@@ -32,8 +33,17 @@ export function calendarQuery(state,actor,key,params,requireCondition) {
   if(filter==='branch') where.push("audience='branch'");
   const base='SELECT '+fields+' FROM aaa_calendar WHERE '+where.join(' AND ');
   return {
+    branch,month,filter,today:now.slice(0,10),
     events:{sql:base+' AND substr(start_at,1,7)=? ORDER BY start_at,id LIMIT 400',args:[...args,month]},
-    reminders:{sql:base+" AND status='scheduled' AND reminder_at IS NOT NULL AND reminder_at<=? ORDER BY reminder_at,id LIMIT 30",args:[...args,localDateTime()]}
+    reminders:{sql:base+" AND status='scheduled' AND reminder_at IS NOT NULL AND reminder_at<=? ORDER BY reminder_at,id LIMIT 30",args:[...args,now]}
+  };
+}
+export function calendarPayload(events,reminders,compliance) {
+  const due=compliance.reminders.sort((a,b)=>a.reminder_at.localeCompare(b.reminder_at)||a.id.localeCompare(b.id));
+  return {
+    events:[...events,...compliance.events].sort((a,b)=>a.start_at.localeCompare(b.start_at)||a.id.localeCompare(b.id)),
+    reminders:[...reminders,...due.slice(0,50)].sort((a,b)=>a.reminder_at.localeCompare(b.reminder_at)||a.id.localeCompare(b.id)),
+    additionalComplianceReminders:Math.max(0,due.length-50)
   };
 }
 function validDateTime(value) {

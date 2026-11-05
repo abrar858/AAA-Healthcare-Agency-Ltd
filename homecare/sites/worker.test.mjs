@@ -136,6 +136,24 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await (await request('/api/diary?type=carer&category=Phone+call','manager')).json()).entries.length,1);
     assert.equal((await request('/api/diary?type=client&branch=Blackburn','manager')).status,403);
     const calendar='/api/calendar';
+    const carePlanSource='compliance:client:'+client.id+':care-plan';
+    const review=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:item.id,status:'recorded',reviewed,due:'2099-01-10',reference:'Fictional review'})).json()).compliance[0];
+    const firstReview=(await (await request(calendar+'?month=2099-01',manager)).json()).events.find(event=>event.source===carePlanSource);
+    assert.equal(firstReview.start_at,'2099-01-10');
+    assert.equal(firstReview.canEdit,false);
+    const rescheduled=(await (await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:review.id,status:'recorded',reviewed,due:'2099-02-11',reference:'Fictional review'})).json()).compliance[0];
+    assert.equal((await (await request(calendar+'?month=2099-01',manager)).json()).events.some(event=>event.source===carePlanSource),false);
+    const moved=(await (await request(calendar+'?month=2099-02&view=branch',manager)).json()).events.filter(event=>event.source===carePlanSource);
+    assert.equal(moved.length,1);
+    assert.equal(moved[0].id,firstReview.id);
+    assert.equal(moved[0].start_at,'2099-02-11');
+    for(const role of ['leader','other']) assert.equal((await (await request(calendar+'?month=2099-02',role)).json()).events.some(event=>event.source===carePlanSource),false);
+    assert.equal((await (await request(calendar+'?month=2099-02&view=mine',manager)).json()).events.some(event=>event.source===carePlanSource),false);
+    const restrictedSource='compliance:carer:'+staff.id+':identity';
+    assert.equal((await action(owner,'save-compliance',{type:'carer',subject:staff.id,item:'identity',previous:'',status:'recorded',reviewed,due:'2099-02-12',reference:'Fictional restricted evidence'})).status,200);
+    assert.ok((await (await request(calendar+'?month=2099-02',owner)).json()).events.some(event=>event.source===restrictedSource));
+    assert.equal((await (await request(calendar+'?month=2099-02',manager)).json()).events.some(event=>event.source===restrictedSource),false);
+
     const draftEvent={branch:'Preston',title:'Fictional review',kind:'Assessment due',start_at:'2000-01-10T09:00',end_at:'2000-01-10T10:00',reminder_at:'2000-01-09T09:00',audience:'private',status:'scheduled',notes:'Personal note'};
     const created=(await (await request(calendar,'leader',draftEvent)).json()).id;
     const month=calendar+'?month=2000-01';
@@ -173,6 +191,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await action(owner,'archive-person',{type:'client'},client.id)).status,200);
     const archived=(await (await request('/api/state',manager)).json()).clients.find(item=>item.id===client.id);
     assert.ok(archived.archivedAt);
+    assert.equal((await (await request(calendar+'?month=2099-02',manager)).json()).events.some(event=>event.source===carePlanSource),false);
     assert.equal((await request(personDiary,manager)).status,200);
     assert.equal((await request('/api/diary',manager,note)).status,403);
     assert.equal((await request(file,manager)).status,200);
@@ -184,10 +203,16 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal((await action(owner,'archive-person',{type:'carer'},managerCarer.id)).status,200);
     assert.equal((await action(owner,'restore-person',{type:'carer'},managerCarer.id)).status,200);
     const actionPath='/api/actions';
-    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:item.id,status:'recorded',reviewed:'2000-01-01',due:'2000-01-02',reference:'Fictional expired care plan'})).status,200);
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:rescheduled.id,status:'recorded',reviewed:'2000-01-01',due:'2000-01-02',reference:'Fictional expired care plan'})).status,200);
     assert.equal((await action(manager,'save-compliance',{type:'carer',subject:staff.id,item:'competencies',previous:'',status:'recorded',reviewed,due:reviewed,reference:'Fictional competency'})).status,200);
     const work=(await (await request(actionPath,manager)).json());
     assert.ok(work.some(row=>row.title==='Care plan'&&row.category==='Overdue review'&&row.due==='2000-01-02'));
+    assert.ok((await (await request(calendar+'?month=2000-01',manager)).json()).reminders.some(event=>event.source===carePlanSource));
+    const latest=(await (await request('/api/state',manager)).json()).compliance.find(row=>row.type==='client'&&row.subject===client.id&&row.item==='care-plan');
+    assert.equal((await action(manager,'save-compliance',{type:'client',subject:client.id,item:'care-plan',previous:latest.id,status:'recorded',reviewed,reference:'Fictional review without due date'})).status,200);
+    const cleared=await (await request(calendar+'?month=2000-01',manager)).json();
+    assert.equal([...cleared.events,...cleared.reminders].some(event=>event.source===carePlanSource),false);
+
     assert.ok(work.some(row=>row.category==='Expiring competency'&&row.due===reviewed));
     const missing=work.find(item=>item.category==='Missing evidence'&&item.source.includes(':care-plan:')===false&&item.person===client.name);
     assert.ok(missing);

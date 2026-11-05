@@ -251,7 +251,8 @@ export default {
           }
           const query=calendar.calendarQuery(state,actor,key,params,domain.requireCondition);
           const result=await Promise.all([query.events,query.reminders].map(item=>env.DB.prepare(item.sql).bind(...item.args).all()));
-          return json({events:result[0].results.map(row=>calendar.calendarEntry(actor,key,row)),reminders:result[1].results.map(row=>calendar.calendarEntry(actor,key,row))});
+          const [events,reminders]=result.map(queryResult=>queryResult.results.map(row=>calendar.calendarEntry(actor,key,row)));
+          return json(calendar.calendarPayload(events,reminders,compliance.complianceCalendar(state,actor,query)));
         }
         if(request.method==='POST') {
           domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);

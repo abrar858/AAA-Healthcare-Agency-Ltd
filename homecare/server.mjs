@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { complianceView, permittedCatalog, recordCompliance } from './compliance.mjs';
+import { complianceView, permittedCatalog, recordCompliance, complianceCalendar } from './compliance.mjs';
 import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
 import * as actionList from './actions.mjs';
 import * as calendar from './calendar.mjs';
@@ -275,9 +275,10 @@ function startServer() {
             requireCondition(calendar.canReadCalendar(actor,user.email,row)&&row.owner_key===user.email,'Calendar history not found.',404);
             return json(res,200,db.prepare(calendar.calendarHistorySql).all(row.id));
           }
-          const query=calendar.calendarQuery(readState(),actor,user.email,params,requireCondition);
+          const state=readState();
+          const query=calendar.calendarQuery(state,actor,user.email,params,requireCondition);
           const read=item=>db.prepare(item.sql).all(...item.args).map(row=>calendar.calendarEntry(actor,user.email,row));
-          return json(res,200,{events:read(query.events),reminders:read(query.reminders)});
+          return json(res,200,calendar.calendarPayload(read(query.events),read(query.reminders),complianceCalendar(state,actor,query)));
         }
         if(req.method==='POST') {
           requireCondition((req.headers['content-type']??'').split(';')[0]==='application/json','Use JSON for this request.',415);
