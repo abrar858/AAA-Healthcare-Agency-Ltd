@@ -131,14 +131,46 @@ async function update(request,env,{actor,membership},isCompliance) {
   return json(publicState(state,actor));
 }
 
+function backupJobAuthorised(request,env) {
+  const given=request.headers.get('X-AAA-Backup-Key')||'', expected=env.AAA_BACKUP_SERVICE_KEY||'';
+  if(expected.length<24||given.length!==expected.length) return false;
+  let difference=0;
+  for(let index=0;index<expected.length;index++) difference|=given.charCodeAt(index)^expected.charCodeAt(index);
+  return difference===0;
+}
+async function createBackup(env,mode) {
+  try {return json(await backups.takeBackup(env,mode),201);}
+  catch(error) {
+    console.error('Backup was not completed:',error.name);
+    return json({error:'Backup failed. No incomplete backup was marked as verified.'},503);
+  }
+}
+
 export default {
   async fetch(request,env) {
     const path=new URL(request.url).pathname;
     try {
+      if(path==='/api/backup-job') {
+        domain.requireCondition(backupJobAuthorised(request,env),'Backup service access denied.',403);
+        if(request.method==='POST') return await createBackup(env,'scheduled');
+        return json({error:'Method not allowed.'},405);
+      }
       const auth=await authenticate(request,env);
       const {actor}=auth;
       if (request.method==='POST') domain.requireCondition(env.AAA_ORIGIN && request.headers.get('Origin')===env.AAA_ORIGIN,'Invalid request origin.',403);
       if (request.method==='POST' && path==='/logout') return response(null,303,{Location:'/signout-with-chatgpt?return_to=%2F'});
+      if (path==='/api/backups'||path.startsWith('/api/backups/')) {
+        domain.requireCondition(!auth.membership&&actor.role==='admin','Only Head Office Admin can access backups.',403);
+        if(path==='/api/backups'&&request.method==='GET') return json(await backups.listBackups(env));
+        if(path==='/api/backups'&&request.method==='POST') return await createBackup(env,'manual');
+        if(request.method==='GET'&&path.endsWith('/download')) {
+          const id=path.split('/')[3];
+          domain.requireCondition(backups.validBackupId(id),'Backup not found.',404);
+          const stream=await backups.openBackup(env,id);
+          return response(stream,200,{'Content-Type':'application/x-tar','Content-Disposition':'attachment; filename="AAA-Homecare-'+id+'.tar"'});
+        }
+        return json({error:'Page not found.'},404);
+      }
       if (path==='/api/access') {
         domain.requireCondition(!auth.membership,'Only the site owner can manage access.',403);
         if (request.method==='GET') return json(await staffAccess(env));
@@ -146,7 +178,7 @@ export default {
       }
       if (request.method==='GET' && path==='/') {
         const {state}=await workspace(env);
-        const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor),site:true,access:auth.membership?null:await staffAccess(env)}).replaceAll('<','\\u003c');
+        const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor),site:true,backupAccess:!auth.membership&&actor.role==='admin',access:auth.membership?null:await staffAccess(env)}).replaceAll('<','\\u003c');
         const nonce=crypto.randomUUID().replaceAll('-','');
         return response(html.replace('<script>','<script nonce="'+nonce+'">').replace('const live = null;',()=> 'const live = '+app+';'),200,{
           'Content-Type':'text/html; charset=utf-8',

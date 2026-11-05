@@ -80,3 +80,17 @@ Only Head Office Admin can archive or restore clients, carers and form templates
 The list gathers missing evidence, overdue reviews, competencies due within 30 days and assessment drafts. Staff see items only if they can access the source. Automatic items disappear when the underlying record is resolved. New missing-evidence actions default to seven days after first appearing, with the branch manager's queue as owner. Restricted evidence defaults to Head Office Admin. You can assign a named authorised owner and adjust the due date.
 
 Use **Create follow-up action** on a diary entry to assign a callback or other task. Use **Open source** from the action card to return to that diary entry, assessment or checklist item. Diary actions can be marked completed and reviewed through the status filter.
+
+## Backups and recovery
+
+Head Office Admin can open **Backups & recovery** to create, verify and download backups. A snapshot reads all six application tables in one database transaction, then copies every referenced PDF, including previous versions. It is listed only after all files have been read back and checked. Backups are encrypted in the hosted bucket, under a separate prefix in the same bucket as the portal's PDFs. Download a copy to an approved encrypted location that does not depend on that bucket. Downloaded TAR files contain readable care records and must be protected.
+
+For an isolated restore, run this from a trusted computer with Node.js 24:
+
+```bash
+node homecare/sites/restore-backup.mjs /path/to/AAA-Homecare-backup.tar /path/to/new-private-restore-folder
+```
+
+The command checks file hashes and database-to-PDF references, refuses to overwrite an existing folder, and restores `aaa-homecare.sqlite` and `documents/compliance/` together. It applies the hosted schema and runs SQLite integrity checks. This does not change the live portal. In a real incident, validate an isolated recovery before an authorised operator reimports the tables and PDFs into the original hosting environment. Upload each recovered PDF under its original object key, for example `compliance/<id>` without the local file extension. A different Site uses different sign-in identities and needs an access and calendar ownership migration before cutover.
+
+The private backup job at `POST /api/backup-job` accepts the current Sites service credential in the dispatch and backup headers. It returns only a verification summary and reuses a successful scheduled copy for that UTC day. Store the service credential and encryption key as runtime secrets. A change to the encryption key requires a backup migration or prior portable exports. No automatic retention deletion is configured.

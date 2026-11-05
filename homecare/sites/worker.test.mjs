@@ -6,6 +6,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { restoreBackup } from './restore-backup.mjs';
+import { backupTables } from './backups.mjs';
 
 test('hosted access is scoped, identity-bound, and revocable', async () => {
   const target=mkdtempSync(join(tmpdir(),'aaa-worker-test-'));
@@ -19,8 +21,8 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
-    const env={AAA_ORIGIN:'https://aaa.example.invalid',AAA_OWNER_EMAIL:'owner@example.invalid',
-      DB:{prepare(sql){
+    const env={AAA_ORIGIN:'https://aaa.example.invalid',AAA_OWNER_EMAIL:'owner@example.invalid',AAA_BACKUP_ENCRYPTION_KEY:'42'.repeat(32),AAA_BACKUP_SERVICE_KEY:'test-backup-secret-never-production',
+      DB:{batch:async statements=>Promise.all(statements.map(statement=>statement.all())),prepare(sql){
         const statement=storage.prepare(sql);
         const bound=(...args)=>({
           first:async()=>statement.get(...args),
@@ -29,12 +31,23 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
         });
         return {...bound(),bind:bound};
       }},
-      BUCKET:{put:async(key,body)=>files.set(key,body),get:async key=>files.has(key)?{body:files.get(key)}:null,delete:async key=>files.delete(key)}};
+      BUCKET:{
+        put:async(key,body)=>files.set(key,typeof body==='string'?Buffer.from(body):Buffer.from(body)),
+        get:async key=>{
+          if(!files.has(key)) return null;
+          const bytes=files.get(key);
+          return {body:new Uint8Array(bytes),size:bytes.length,arrayBuffer:async()=>new Uint8Array(bytes).buffer,json:async()=>JSON.parse(bytes.toString('utf8'))};
+        },
+        head:async key=>files.has(key)?{}:null,
+        list:async({prefix})=>({objects:[...files.keys()].filter(key=>key.startsWith(prefix)).map(key=>({key})),truncated:false}),
+        delete:async key=>{for(const name of [key].flat()) files.delete(name);}
+      }};
+
     const owner='owner', manager='manager';
     const request=(path,user,body,opts={})=>worker.fetch(new Request(env.AAA_ORIGIN+path,{
       method:body?'POST':'GET',headers:{
         ...(user?{'oai-authenticated-user-id':opts.identity??user+'-id','oai-authenticated-user-email':user+'@example.invalid'}:{}),
-        ...(body?{Origin:opts.origin??env.AAA_ORIGIN,'Content-Type':'application/json'}:{})
+        ...(body?{Origin:opts.origin??env.AAA_ORIGIN,'Content-Type':'application/json'}:{}),...opts.headers
       },...(body?{body:JSON.stringify(body)}:{})
     }),env);
     const action=(user,action,fields,id='')=>request(action==='save-compliance'?'/api/compliance':'/api/action',user,{action,id,fields});
@@ -207,6 +220,53 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     assert.equal(savedFollowup.ownerName,leader.label);
     assert.equal((await request(actionPath,manager,{source,owner:leaderOption.key,due:reviewed,status:'complete',version:savedFollowup.version})).status,200);
     assert.equal((await (await request(actionPath,manager)).json()).find(item=>item.source===source).status,'complete');
+    assert.equal((await request('/api/backups',manager)).status,403);
+    assert.equal((await request('/api/backups',owner,{}, {origin:'https://wrong.invalid'})).status,403);
+    assert.equal((await request('/api/backup-job',null,{})).status,403);
+    const scheduledHeaders={'X-AAA-Backup-Key':env.AAA_BACKUP_SERVICE_KEY};
+    const made=await request('/api/backup-job',null,{}, {headers:scheduledHeaders});
+    assert.equal(made.status,201);
+    const saved=await made.json();
+    assert.equal(saved.documents,1);
+    assert.equal(saved.tables,6);
+    assert.ok(saved.verifiedAt);
+    const retry=await (await request('/api/backup-job',null,{}, {headers:scheduledHeaders})).json();
+    assert.equal(retry.id,saved.id);
+    assert.equal(retry.reused,true);
+    assert.equal((await (await request('/api/backups',owner)).json()).length,1);
+    const backupPath='/api/backups/'+saved.id+'/download';
+    assert.equal((await request(backupPath,manager)).status,403);
+    assert.equal((await request(backupPath,null,null,{headers:scheduledHeaders})).status,401);
+    const databaseKey=[...files.keys()].find(key=>key.endsWith('/database.json'));
+    assert.ok(databaseKey);
+    assert.equal(files.get(databaseKey).includes(Buffer.from('Fictional Client')),false);
+    const archive=join(target,'backup.tar'), recovery=join(target,'restored');
+    const portable=await request(backupPath,owner);
+    assert.equal(portable.status,200);
+    const archiveBytes=Buffer.from(await portable.arrayBuffer());
+    writeFileSync(archive,archiveBytes);
+    execFileSync('tar',['-tf',archive]);
+    assert.equal(restoreBackup(archive,recovery).documents,1);
+    const restored=new DatabaseSync(join(recovery,'aaa-homecare.sqlite'),{readOnly:true});
+    try {
+      for(const table of backupTables) assert.deepEqual(restored.prepare('SELECT * FROM '+table).all(),storage.prepare('SELECT * FROM '+table).all());
+      assert.equal(restored.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+    } finally {restored.close();}
+    assert.equal(readFileSync(join(recovery,'documents','compliance',item.id+'.pdf'),'utf8'),atob(pdf));
+    assert.throws(()=>restoreBackup(archive,recovery),/never overwritten/);
+    const truncated=join(target,'truncated.tar');
+    writeFileSync(truncated,archiveBytes.subarray(0,-512));
+    assert.throws(()=>restoreBackup(truncated,join(target,'failed-restore')),/ending/);
+    const corrupt=Buffer.from(archiveBytes);
+    const pdfOffset=corrupt.indexOf(Buffer.from('%PDF-'));
+    corrupt[pdfOffset+5]^=1;
+    const corruptPath=join(target,'corrupt.tar');
+    writeFileSync(corruptPath,corrupt);
+    assert.throws(()=>restoreBackup(corruptPath,join(target,'corrupt-restore')),/checksum/);
+    await env.BUCKET.delete('compliance/'+item.id);
+    assert.equal((await request('/api/backups',owner,{})).status,503);
+    assert.equal((await (await request('/api/backups',owner)).json()).length,1);
+    assert.equal((await request(backupPath,owner)).status,200);
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
     assert.equal((await request('/api/state',manager)).status,403);
