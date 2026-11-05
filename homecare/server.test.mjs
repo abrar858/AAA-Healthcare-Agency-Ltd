@@ -54,7 +54,7 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     return response.json();
   }
   async function action(cookie,action,id='',fields={},status=200,from=origin) {
-    const response = await request('/api/action',{method:'POST',headers:{Cookie:cookie,Origin:from,'Content-Type':'application/json'},body:JSON.stringify({action,id,fields})});
+    const response = await request(action==='save-compliance'?'/api/compliance':'/api/action',{method:'POST',headers:{Cookie:cookie,Origin:from,'Content-Type':'application/json'},body:JSON.stringify({action,id,fields})});
     const result = await response.json();
     assert.equal(response.status,status,JSON.stringify(result));
     return result;
@@ -89,6 +89,34 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     const patch = (await action(blackburn,'add-patch','',{name:'North',branch:'Blackburn'})).patches[0];
     const client = (await action(blackburn,'add-client','',{name:'Fictional Blackburn Client',patch:patch.id})).clients[0];
     await action(preston,'add-client','',{name:'Wrong branch',patch:patch.id},403);
+    const reviewed = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const evidence = Buffer.from('%PDF-1.7\nFictional test upload').toString('base64');
+    const carePlan = {type:'client',subject:client.id,item:'care-plan',status:'recorded',reviewed,due:reviewed,previous:'',pdf:evidence};
+    await action(preston,'save-compliance','',carePlan,403);
+    await action(carer,'save-compliance','',carePlan,403);
+    await action(blackburn,'save-compliance','',{...carePlan,pdf:'not a PDF'},400);
+    await action(blackburn,'save-compliance','',{...carePlan,status:'not-applicable',pdf:'',notes:'Test'},400);
+    const savedPlan = (await action(blackburn,'save-compliance','',carePlan)).compliance[0];
+    assert.equal(savedPlan.hasPdf,true);
+    assert.equal(savedPlan.pdf,undefined);
+    assert.equal((await state(preston)).compliance.length,0);
+    const pdfPath = '/api/compliance-pdf/'+savedPlan.id;
+    const storedPdf = await request(pdfPath,{headers:{Cookie:blackburn}});
+    assert.equal(storedPdf.status,200);
+    assert.match(storedPdf.headers.get('content-disposition'),/^attachment;/);
+    assert.equal(Buffer.from(await storedPdf.arrayBuffer()).toString('base64'),evidence);
+    assert.equal((await request(pdfPath,{headers:{Cookie:preston}})).status,404);
+    assert.equal((await request(pdfPath)).status,401);
+    await action(blackburn,'save-compliance','',{...carePlan,reference:'New version',pdf:''},409);
+    const updated = await action(blackburn,'save-compliance','',{...carePlan,previous:savedPlan.id,reference:'New version',pdf:''});
+    assert.equal(updated.compliance.filter(entry=>entry.item==='care-plan').length,2);
+    await action(blackburn,'save-compliance','',{...carePlan,item:'mar',status:'not-applicable',pdf:'',notes:'Self-administers in this fictional case'});
+    const hrEvidence = {type:'carer',subject:person.id,item:'identity',status:'recorded',reviewed,previous:'',pdf:evidence};
+    await action(preston,'save-compliance','',hrEvidence,403);
+    const hrDocument = (await action(hr,'save-compliance','',hrEvidence)).compliance[0];
+    assert.equal((await state(preston)).compliance.length,0);
+    assert.equal((await request('/api/compliance-pdf/'+hrDocument.id,{headers:{Cookie:preston}})).status,404);
+    assert.equal((await request('/api/compliance-pdf/'+hrDocument.id,{headers:{Cookie:admin}})).status,200);
     const visit = (await action(blackburn,'add-visit','',{client:client.id,date:'2026-11-05',time:'12:00',minutes:'30',required:'1'})).visits[0];
     assert.deepEqual((await state(preston)).branches,['Preston']);
     assert.equal((await state(preston)).clients.length,0);
@@ -113,6 +141,8 @@ test('authenticated branch workflow survives restart and rejects unauthorised re
     await stop();
     await start();
     assert.equal((await state(admin)).visits[0].assignments[0].note,'Fictional care note');
+    assert.equal((await request(pdfPath,{headers:{Cookie:blackburn}})).status,200);
+    assert.equal((await state(admin)).compliance.length,4);
     assert.equal((await request('/logout',{method:'POST',headers:{Cookie:carer,Origin:origin}})).status,303);
     assert.equal((await request('/api/state',{headers:{Cookie:carer}})).status,401);
     const revoke=spawnSync(process.execPath,[script,'disable-user','preston@example.invalid'],{env,encoding:'utf8'});

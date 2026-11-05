@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
+import { complianceView, permittedCatalog, recordCompliance } from './compliance.mjs';
 import { initialState, roles, applyAction, project, AppError, requireCondition } from './domain.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -25,10 +26,12 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY, email TEXT NOT NULL REFERENCES users(email), expires INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS compliance_pdfs (id TEXT PRIMARY KEY, body BLOB NOT NULL);
   CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
 `);
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -136,12 +139,12 @@ function startServer() {
 <form method="post" action="/login"><label>Email<input name="email" type="email" autocomplete="username" required maxlength="254"></label>
 <label>Password<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label><button>Sign in</button></form></main></html>`);
   }
-  async function readBody(req) {
+  async function readBody(req,limit=12000) {
     let bytes = 0;
     const parts = [];
     for await (const chunk of req) {
       bytes += chunk.length;
-      requireCondition(bytes <= 12000,'Request is too large.',413);
+      requireCondition(bytes <= limit,'Request is too large.',413);
       parts.push(chunk);
     }
     return Buffer.concat(parts).toString('utf8');
@@ -150,10 +153,19 @@ function startServer() {
     db.exec('BEGIN IMMEDIATE');
     try {
       const state = readState();
-      applyAction(state,actor,action,id,fields);
+      if (action === 'save-compliance') {
+        let file = null;
+        if (fields.pdf) {
+          requireCondition(typeof fields.pdf === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(fields.pdf),'Invalid PDF upload.');
+          file = Buffer.from(fields.pdf,'base64');
+          requireCondition(file.length <= 5*1024*1024 && file.subarray(0,5).toString()==='%PDF-','Upload a PDF of up to 5 MB.');
+        }
+        const entry = recordCompliance(state,actor,fields,file,requireCondition);
+        if (file) db.prepare('INSERT INTO compliance_pdfs VALUES (?,?)').run(entry.id,file);
+      } else applyAction(state,actor,action,id,fields);
       db.prepare('UPDATE workspace SET body=? WHERE id=1').run(JSON.stringify(state));
       db.exec('COMMIT');
-      return project(state,actor);
+      return projectWorkspace(state,actor);
     } catch(error) {
       db.exec('ROLLBACK');
       throw error;
@@ -193,16 +205,27 @@ function startServer() {
         return redirect(res,'/login');
       }
       if (req.method === 'GET' && path === '/') {
-        const state = JSON.stringify({actor,db:project(readState(),actor)}).replaceAll('<','\\u003c');
+        const state = JSON.stringify({actor,db:projectWorkspace(readState(),actor),catalog:permittedCatalog(actor)}).replaceAll('<','\\u003c');
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
-      if (req.method === 'GET' && path === '/api/state') return json(res,200,project(readState(),actor));
-      if (req.method === 'POST' && path === '/api/action') {
+      if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      const pdfId = /^\/api\/compliance-pdf\/([a-f0-9-]{36})$/.exec(path)?.[1];
+      if (req.method === 'GET' && pdfId) {
+        const entry = complianceView(readState(),actor).find(item=>item.id===pdfId && item.hasPdf);
+        const file = entry && db.prepare('SELECT body FROM compliance_pdfs WHERE id=?').get(pdfId);
+        requireCondition(file,'Document not found.',404);
+        res.setHeader('Content-Disposition','attachment; filename="compliance-evidence.pdf"');
+        return write(res,200,file.body,'application/pdf');
+      }
+      if (req.method === 'POST' && (path === '/api/action' || path === '/api/compliance')) {
+        const compliance = path === '/api/compliance';
+        if (compliance) requireCondition(['admin','manager','hr'].includes(actor.role),'You do not have access to compliance.',403);
         requireCondition((req.headers['content-type'] ?? '').split(';')[0] === 'application/json','Use JSON for this request.',415);
         let body;
-        try { body = JSON.parse(await readBody(req)); }
+        try { body = JSON.parse(await readBody(req,compliance?7*1024*1024+12000:12000)); }
         catch(error) { if (error instanceof AppError) throw error; throw new AppError(400,'Invalid JSON request.'); }
         requireCondition(body && typeof body.action === 'string' && typeof body.id === 'string' && body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields),'Invalid action request.');
+        requireCondition((body.action === 'save-compliance') === compliance,'Invalid action endpoint.',400);
         // Re-read after the asynchronous body read so revoked sessions cannot write.
         const current = userOf(req);
         requireCondition(current,'Sign in to continue.',401);

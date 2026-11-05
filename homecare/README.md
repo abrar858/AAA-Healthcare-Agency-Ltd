@@ -34,3 +34,13 @@ Use a Node host with a persistent, private volume for the SQLite database. Set `
 The backend checks branch scope and role on every write and returns filtered records on reads. Cross-branch cover requests can be approved by the carer’s home branch manager. Head Office Admin can authorise urgent cover. Account provisioning is currently an operator command. The workflow records basic onboarding checks and visit activity. It does not store HR documents or implement formal care plans.
 
 Do not commit databases, backups, credentials or real staff/client details to GitHub.
+
+## Compliance registers
+
+Client and carer compliance are the first screens for accounts with access. Create the client or staff record, then open their register. Each person starts with a checklist. Conditional items can be marked **Not applicable** with a reason. The dashboard uses the review due date to flag overdue items and items due within 30 days. A recorded status means evidence was entered and reviewed. It does not certify that the service meets all requirements.
+
+Attach a PDF of up to 5 MB or enter a reference to a document in the organisation's existing records. Changes are saved as separate history entries. Files from prior versions remain available through History. Client files are available to their branch manager and Head Office Admin. Branch HR can manage their carers' records, and the branch manager can manage operational items such as training, competency and supervision. Restricted recruitment records are available to authorised HR and Head Office Admin. Downloads require an authenticated account with access to the underlying checklist item.
+
+The included checklist is a starting point for AAA to confirm against its policies, commissioner instructions, each care package and staff role. Review intervals are entered per item. The register tracks MAR evidence and its review. It does not provide a live medication administration workflow. Use references to existing records where the original is in another format.
+
+Run the HTTP integration checks with `node --test homecare/server.test.mjs`.
