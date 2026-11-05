@@ -12,6 +12,8 @@
 main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);padding:15px clamp(16px,4vw,46px);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.topbar label{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.85rem}.topbar select{width:auto;max-width:100%}.env{font-weight:700;font-size:.82rem;color:var(--green)}.content{max-width:1350px;margin:auto;padding:26px clamp(16px,4vw,46px) 48px}.hero{background:#e4f2e9;border:1px solid #d2e8d9;border-radius:18px;padding:26px;margin-bottom:18px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.72rem;font-weight:750;color:var(--green)}h1,h2,p{margin:0}h1{font-size:clamp(1.6rem,4vw,2.5rem);line-height:1.12;letter-spacing:-.04em;margin:.3rem 0 .45rem}h2{font-size:1.13rem;line-height:1.25}p.sub,.muted{color:var(--muted)}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.card,.panel{background:white;border:1px solid var(--line);border-radius:14px}.card{padding:15px}.metric{font-size:1.8rem;font-weight:750;line-height:1.2;margin:.25rem 0}.panel{margin-bottom:15px;overflow:hidden}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:16px 17px;border-bottom:1px solid var(--line)}.panel-head p{font-size:.85rem;margin-top:3px}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:10px 15px;border-bottom:1px solid #eaf0ec;vertical-align:middle}th{background:#f9fbf9;color:var(--muted);font-size:.78rem;white-space:nowrap}td{font-size:.9rem}tr:last-child td{border-bottom:0}.empty{padding:18px;color:var(--muted)}.actions{display:flex;gap:6px;flex-wrap:wrap}.badge{display:inline-block;border-radius:100px;padding:.19rem .55rem;background:#edf2f1;color:#34524e;font-size:.75rem;font-weight:700;white-space:nowrap}.badge.ok{background:var(--mint);color:#14513d}.badge.warn{background:var(--amber);color:#724d11}.badge.bad{background:#fbe8e3;color:#8b3528}.notice{margin-bottom:12px;color:var(--green);font-weight:650}.notice:empty{display:none}.notice.error{color:#a13629}.activity{list-style:none;padding:0;margin:0}.activity li{padding:10px 17px;border-bottom:1px solid #eaf0ec}.activity li:last-child{border:0}.activity time{display:block;font-size:.78rem;color:var(--muted)}.form-fields{display:grid;gap:12px;margin:14px 0}.form-fields label{display:grid;gap:4px;font-size:.88rem;font-weight:650}.form-fields label.check{display:flex;align-items:center;gap:7px}.check input{width:auto}.dialog-actions{display:flex;justify-content:flex-end;gap:8px}dialog{width:min(490px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid var(--line);border-radius:15px;padding:21px;color:var(--ink);box-shadow:0 18px 50px #0003}dialog::backdrop{background:#102b2b88}.dialog-error{color:#a13629;margin-bottom:8px}.dialog-error:empty{display:none}.register-filters{padding:12px 17px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}.register-filters label{font-size:.85rem;font-weight:650}.register-filters select{width:auto;max-width:100%}.register-filters label select{display:block}.register-filters button{align-self:end}.register-pages{border-top:1px solid var(--line);padding:12px 17px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.notes{max-width:24rem;overflow-wrap:anywhere;white-space:pre-wrap}
 @media(max-width:850px){.shell{grid-template-columns:180px minmax(0,1fr)}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.shell{display:block}.sidebar{padding:12px;gap:10px}.nav{display:flex;flex-wrap:wrap}.nav button{padding:.35rem .55rem;font-size:.84rem}.sidefoot{display:flex;align-items:center;justify-content:space-between;padding-top:6px;gap:8px}.sidefoot small{margin:0}.topbar{padding:10px 12px}.topbar label{flex-wrap:wrap}.content{padding:15px 12px 35px}.hero{padding:17px}.card{padding:11px}th,td{padding:8px 10px}}
+.assessment-body{padding:16px 17px}.assessment-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:10px}.assessment-card{min-width:0;border:1px solid var(--line);border-radius:12px;padding:13px;display:grid;gap:7px;overflow-wrap:anywhere}.assessment-card .actions a{padding:.35rem .65rem;border:1px solid var(--line);border-radius:8px;color:var(--green);text-decoration:none;font-size:.88rem}.assessment-body .form-fields{max-width:760px}.assessment-question{min-width:0;display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:9px}.assessment-question .actions{justify-content:flex-end}.assessment-body textarea{min-height:7rem}.assessment-error{color:#a13629}.assessment-body input[type=checkbox]{width:auto}.assessment-body [hidden]{display:none!important}
+@media(max-width:620px){.assessment-body{padding:13px 12px}.assessment-body input,.assessment-body textarea,.assessment-body select{font-size:16px}.assessment-card .actions a,.assessment-body button{min-height:42px;display:inline-flex;align-items:center}}
 </style>
 </head>
 <body>
@@ -35,10 +37,11 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
-const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access' };
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access', assessments:'Assessments' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
+  team_leader:{label:'Team Leader',pages:[]},
   hr:{ label:'HR Officer', pages:['hr','staff'] },
   rota:{label:'Rota Coordinator',pages:['overview','rota','staff']},
   accounts:{label:'Accounts',pages:['accounts']},
@@ -93,7 +96,7 @@ const navigation = () => {
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  return [...registerPages,...(staffAccess?['access']:[]),...roles[actor.role].pages];
+  return [...registerPages,...(db.assessment?['assessments']:[]),...(staffAccess?['access']:[]),...roles[actor.role].pages];
 };
 let page = navigation()[0];
 let saveAction;
@@ -433,7 +436,7 @@ $('#view').addEventListener('submit',event=>{
 });
 
 
-const hostedRoles = ['manager','hr','rota','accounts','carer'];
+const hostedRoles = ['manager','team_leader','hr','rota','accounts','carer'];
 function accessPage() {
   return hero('Staff access','Assign app access by email, role and branch.')+
     panel('Rollout steps','The private site has a separate invitation list.',
@@ -478,6 +481,129 @@ function revokeEditor(email) {
     '<p>They will lose access to the tracker. Remove their site invitation separately if needed.</p>',()=>{},'Revoke access');
 }
 
+
+let assessmentScreen = null;
+const assessmentTypes = [['short','Short text'],['long','Long text'],['choice','Multiple choice'],['yesno','Yes / No / Not applicable'],['date','Date'],['number','Number']];
+const assessmentPeople = type => (type==='client'?db.clients:db.staff).filter(person=>inScope(person.branch));
+const assessmentTemplates = () => db.assessment.templates.filter(template=>!template.branch||inScope(template.branch));
+function openAssessmentScreen(screen) {
+  if(screen.startsWith('start:')) {
+    const template=assessmentTemplates().find(item=>item.id===screen.slice(6)&&!item.archived);
+    if(!template) return;
+    assessmentScreen={screen:'fill',template};
+  } else assessmentScreen=screen?{screen}:null;
+  notice('');
+  render();
+}
+function openAssessmentDraft(id) {
+  const record=db.assessment.records.find(item=>item.id===id&&inScope(item.branch)&&!item.completedAt);
+  if (!record) return;
+  assessmentScreen={screen:'fill',record,template:record.template};
+  render();
+}
+function questionMarkup() {
+  return '<fieldset class="assessment-question"><legend>Question</legend>'+field('Question label','label','required maxlength="180"')+
+    select('Answer type','type',assessmentTypes)+check('Required to complete','required',true)+
+    '<div data-choices hidden>'+field('Options separated by commas','options','maxlength="1200" placeholder="Pass, Further training, Reassessment"')+'</div>'+
+    actions(button('Remove question','remove-question'))+'</fieldset>';
+}
+function addAssessmentQuestion() {
+  const container=$('#assessment-questions');
+  if (container.children.length>=30) {notice('A form can have up to 30 questions.',true);return;}
+  container.insertAdjacentHTML('beforeend',questionMarkup());
+  container.lastElementChild.querySelector('[name="label"]').focus();
+}
+function archiveAssessmentTemplate(id) {
+  const template=assessmentTemplates().find(item=>item.id===id&&!item.archived&&!item.builtIn);
+  if(!template) return;
+  pendingAction={action:'archive-assessment-template',id};
+  showEditor('Archive '+template.title,'<p>This form will no longer be available for new assessments. Existing records stay available.</p>',()=>{},'Archive form');
+}
+function fillAnswer(item,index,value='') {
+  const name='answer-'+index, label=item.label+(item.required?' (required to complete)':'');
+  if(item.type==='long') return '<label>'+h(label)+'<textarea name="'+name+'" maxlength="2400">'+h(value)+'</textarea></label>';
+  if(item.type==='choice'||item.type==='yesno') {
+    const options=item.type==='choice'?item.options:['Yes','No','Not applicable'];
+    return '<label>'+h(label)+'<select name="'+name+'"><option value="">Select an answer</option>'+options.map(option=>'<option value="'+h(option)+'"'+(option===value?' selected':'')+'>'+h(option)+'</option>').join('')+'</select></label>';
+  }
+  return field(label,name,item.type==='date'?'type="date"':item.type==='number'?'type="number" step="any"':'maxlength="300"',value);
+}
+function assessmentsPage() {
+  const back=button('Back to assessments','assessment-screen');
+  if(assessmentScreen?.screen==='template') {
+    const branches=db.branches.filter(inScope).map(branch=>[branch,branch]);
+    const scopes=actor.role==='admin'?[['','All branches'],...branches]:branches;
+    return hero('Create an assessment form','Build a reusable form with the questions your team needs.')+
+      panel('Form template','Choose a person type, a branch and the questions to include.',
+        '<div class="assessment-body"><form id="assessment-template"><div class="form-fields">'+field('Form title','title','required maxlength="120"')+
+        select('Use for','subject',[['client','Client'],['carer','Carer']])+
+        '<label>Available in<select name="branch">'+opts(scopes)+'</select></label><div id="assessment-questions">'+questionMarkup()+'</div>'+
+        button('Add another question','add-question')+'</div><p class="assessment-error" role="alert"></p>'+
+        actions(back,'<button class="primary" type="submit">Save template</button>')+'</form></div>');
+  }
+  if(assessmentScreen?.screen==='fill') {
+    const {record,template}=assessmentScreen;
+    return hero(template.title,record?'Continue your draft assessment.':'Complete an assessment for a client or carer.')+
+      panel('Assessment details','You can save a draft and finish it later. A completed assessment is locked.',
+        '<div class="assessment-body"><form id="assessment-fill"><div class="form-fields">'+
+        (record?'<p><strong>Person:</strong> '+h(record.subjectName)+'</p>':select(template.subject==='client'?'Client':'Carer','subject',assessmentPeople(template.subject)
+          .filter(person=>!template.branch||person.branch===template.branch).map(person=>[person.id,person.name+' · '+person.branch])))+
+        field('Assessment date','date','type="date" required',record?.date??today)+template.questions.map((item,index)=>fillAnswer(item,index,record?.answers[index])).join('')+
+        '</div><p class="assessment-error" role="alert"></p>'+actions(back,
+          '<button type="submit" value="draft">Save draft</button>','<button class="primary" type="submit" value="complete">Complete assessment</button>')+'</form></div>');
+  }
+  const templates=assessmentTemplates().filter(item=>!item.archived);
+  const records=db.assessment.records.filter(item=>inScope(item.branch));
+  const card=(title,details,controls)=>'<article class="assessment-card"><strong>'+h(title)+'</strong>'+details+controls+'</article>';
+  return hero('Assessments','Create forms, record assessments and download completed work.')+
+    panel('Assessment records','Drafts and completed assessments in the selected workspace.',
+      '<div class="assessment-body">'+(records.length?'<div class="assessment-grid">'+records.map(record=>{
+        const url='/api/assessment-document/'+h(record.id);
+        return card(record.template.title,'<span>'+h(record.subjectName+' · '+record.branch)+'</span><small>'+h(displayDate(record.date))+' · '+
+          h(record.updatedBy)+'</small><div>'+badge(record.completedAt?'Completed':'Draft',record.completedAt?'ok':'warn')+'</div>',
+          record.completedAt?actions('<a href="'+url+'?view=1" target="_blank" rel="noopener">View / Print</a>',
+            '<a href="'+url+'" download>Download</a>'):actions(button('Continue draft','assessment-draft',record.id)));
+      }).join('')+'</div>':'<p class="muted">No assessments have been saved yet.</p>')+'</div>')+
+    panel('Form templates','Use a starter form or create a template for your team.',
+      '<div class="assessment-body"><div class="assessment-grid">'+templates.map(template=>{
+        const available=assessmentPeople(template.subject).some(person=>!template.branch||person.branch===template.branch);
+        const canArchive=!template.builtIn&&db.assessment.canBuild&&(actor.role==='admin'||actor.branch===template.branch);
+        return card(template.title,'<small>'+h((template.subject==='client'?'Client':'Carer')+' · '+(template.branch??'All branches')+' · '+template.questions.length+' questions')+'</small>',
+          actions(available?button('Start assessment','assessment-screen','start:'+template.id):'<small class="muted">Add a '+template.subject+' in this branch first.</small>',
+          canArchive&&button('Archive','archive-template',template.id)));
+      }).join('')+'</div></div>',db.assessment.canBuild?button('Create form','assessment-screen','template','primary'):'');
+}
+$('#view').addEventListener('change',event=>{
+  if(event.target.name!=='type'||!event.target.closest('.assessment-question')) return;
+  event.target.closest('.assessment-question').querySelector('[data-choices]').hidden=event.target.value!=='choice';
+});
+$('#view').addEventListener('submit',async event=>{
+  const form=event.target;
+  if(!['assessment-template','assessment-fill'].includes(form.id)) return;
+  event.preventDefault();
+  const fields=new FormData(form), error=form.querySelector('.assessment-error');
+  let action,id='',values;
+  if(form.id==='assessment-template') {
+    const questions=[...form.querySelectorAll('.assessment-question')].map(row=>{
+      const type=row.querySelector('[name="type"]').value;
+      const item={label:row.querySelector('[name="label"]').value,type,required:row.querySelector('[name="required"]').checked};
+      if(type==='choice') item.options=row.querySelector('[name="options"]').value.split(',').map(text=>text.trim()).filter(Boolean);
+      return item;
+    });
+    action='add-assessment-template';
+    values={...Object.fromEntries(fields),questions};
+  } else {
+    const {record,template}=assessmentScreen;
+    id=record?.id??'';
+    action='save-assessment';
+    values={subject:record?.subject??fields.get('subject'),template:template.id,version:record?.version??0,date:fields.get('date'),
+      answers:template.questions.map((_,index)=>fields.get('answer-'+index)??''),complete:event.submitter?.value==='complete'};
+  }
+  try {
+    if(await sendAction(action,id,values)) {assessmentScreen=null;render();}
+  } catch(failure) {error.textContent=failure.message;}
+});
+
 function render() {
   if (!live) {
     $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
@@ -489,7 +615,7 @@ function render() {
   $('#nav').innerHTML = navigation().map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage
+    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage,assessments:assessmentsPage
   }[page]();
 }
 
@@ -635,10 +761,10 @@ $('#role').addEventListener('change',event=>{
   notice('');
   render();
 });
-$('#branch').addEventListener('change',event=>{scope=event.target.value;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();notice('');render();});
+$('#branch').addEventListener('change',event=>{scope=event.target.value;assessmentScreen=null;complianceFilters.client=blankComplianceFilters();complianceFilters.carer=blankComplianceFilters();notice('');render();});
 $('#nav').addEventListener('click',event=>{
   const target=event.target.closest('[data-page]');
-  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;notice('');render();}
+  if(target&&navigation().includes(target.dataset.page)) {page=target.dataset.page;assessmentScreen=null;notice('');render();}
 });
 $('#editor-cancel').addEventListener('click',()=>$('#editor').close());
 async function sendAction(action, id, fields = {}) {
@@ -691,6 +817,9 @@ $('#view').addEventListener('click',async event=>{
   const visit=visitById(id);
   try {
     const handlers={
+      'assessment-screen':()=>openAssessmentScreen(id), 'assessment-draft':()=>openAssessmentDraft(id),
+      'add-question':addAssessmentQuestion, 'remove-question':()=>target.closest('.assessment-question').remove(),
+      'archive-template':()=>archiveAssessmentTemplate(id),
       'open-compliance':()=>openCompliance(id), 'compliance-page':()=>changeCompliancePage(id), 'clear-compliance':()=>clearCompliance(id),
       'save-access':()=>accessEditor(id), 'revoke-access':()=>revokeEditor(id),
       'add-staff':()=>staffEditor(), 'edit-staff':()=>staffEditor(staffById(id)),

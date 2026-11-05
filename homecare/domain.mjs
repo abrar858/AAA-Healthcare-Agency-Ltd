@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-export const roles = ['admin', 'manager', 'hr', 'rota', 'accounts', 'carer'];
+export const roles = ['admin', 'manager', 'team_leader', 'hr', 'rota', 'accounts', 'carer'];
 export const initialState = () => ({branches: [], patches: [], clients: [], staff: [], visits: [], requests: [], audit: []});
 export class AppError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -148,6 +148,11 @@ const summary = person => ({id:person.id, name:person.name, branch:person.branch
 export function project(state, actor) {
   if (actor.role === 'admin') return state;
   const result = {...initialState(), branches:state.branches.filter(branch => scoped(actor,branch))};
+  if (actor.role === 'team_leader') {
+    result.clients = state.clients.filter(person=>scoped(actor,person.branch)).map(({id,name,branch,patch})=>({id,name,branch,patch}));
+    result.staff = state.staff.filter(person=>scoped(actor,person.branch)).map(({id,name,branch})=>({id,name,branch}));
+    return result;
+  }
   if (actor.role === 'hr') {
     result.staff = state.staff.filter(person => scoped(actor, person.branch));
     return result;

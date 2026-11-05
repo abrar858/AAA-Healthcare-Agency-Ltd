@@ -15,7 +15,7 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     writeFileSync(join(target,'.openai/hosting.json'),'{"d1":"DB","r2":"BUCKET"}');
     execFileSync(process.execPath,[fileURLToPath(new URL('./build.mjs',import.meta.url)),target]);
     const {default:worker}=await import(pathToFileURL(join(target,'dist/server/index.js')));
-    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access']) {
+    for(const file of ['0000_aaa_workspace','0001_aaa_staff_access','0002_aaa_team_leaders']) {
       storage.exec(readFileSync(new URL('./drizzle/'+file+'.sql',import.meta.url),'utf8'));
     }
     const files=new Map();
@@ -66,6 +66,38 @@ test('hosted access is scoped, identity-bound, and revocable', async () => {
     const other={...grant,email:'other@example.invalid',label:'Blackburn Manager',branch:'Blackburn'};
     assert.equal((await access(owner,'save-access',other)).status,200);
     assert.equal((await request(file,'other')).status,404);
+    const templateFields={title:'Custom safety form',subject:'client',branch:'Preston',questions:[
+      {label:'Outcome',type:'choice',options:['Pass','Review'],required:true},
+      {label:'Notes',type:'long',required:false}
+    ]};
+    const template=(await (await action(manager,'add-assessment-template',templateFields)).json()).assessment.templates.find(item=>item.title===templateFields.title);
+    const leader={...grant,email:'leader@example.invalid',label:'Preston Team Leader',role:'team_leader'};
+    assert.equal((await access(owner,'save-access',leader)).status,200);
+    const leaderState=await (await request('/api/state','leader')).json();
+    assert.deepEqual(leaderState.branches,['Preston']);
+    assert.equal(leaderState.assessment.canBuild,false);
+    assert.equal(leaderState.clients[0].id,client.id);
+    assert.equal(leaderState.compliance.length,0);
+    assert.equal((await action('leader','add-assessment-template',templateFields)).status,403);
+    assert.equal((await action('other','save-assessment',{template:template.id,subject:client.id,date:reviewed,answers:['Pass',''],complete:true})).status,403);
+    const form={template:template.id,subject:client.id,date:reviewed,answers:['','<script>test</script>'],complete:false};
+    const draft=(await (await action('leader','save-assessment',form)).json()).assessment.records[0];
+    assert.equal(draft.completedAt,null);
+    const documentPath='/api/assessment-document/'+draft.id;
+    assert.equal((await request(documentPath,'leader')).status,404);
+    assert.equal((await action('leader','save-assessment',{...form,version:draft.version,complete:true},draft.id)).status,400);
+    assert.equal((await action('leader','save-assessment',{...form,version:draft.version,answers:['Pass',form.answers[1]],complete:true},draft.id)).status,200);
+    assert.equal((await action('leader','save-assessment',{...form,version:draft.version+1},draft.id)).status,409);
+    assert.equal((await request(documentPath,'other')).status,404);
+    const download=await request(documentPath,'manager');
+    assert.match(download.headers.get('content-disposition'),/^attachment;/);
+    const exported=await download.text();
+    assert.match(exported,/&lt;script&gt;test&lt;\/script&gt;/);
+    assert.doesNotMatch(exported,/<script>/);
+    assert.match(await (await request(documentPath+'?view=1','leader')).text(),/Print \/ Save as PDF/);
+    assert.equal((await action(manager,'archive-assessment-template',{},template.id)).status,200);
+    assert.equal((await action('leader','save-assessment',{...form,answers:['Pass',''],complete:true})).status,403);
+    assert.equal((await request(documentPath,'leader')).status,200);
     const revoked=(await (await access(owner,'revoke-access',{email:grant.email,version:member.version})).json()).find(row=>row.email===grant.email);
     assert.equal(revoked.enabled,0);
     assert.equal((await request('/api/state',manager)).status,403);

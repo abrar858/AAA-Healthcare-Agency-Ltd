@@ -17,7 +17,7 @@ function bundleModule(file,name) {
   return 'const '+name+' = (() => {\n'+implementation+'\nreturn {'+names.join(',')+'};\n})();\n';
 }
 const code='const html = '+JSON.stringify(read('index.html'))+';\n'+bundleModule('domain.mjs','domain')+
-  bundleModule('compliance.mjs','compliance')+read('sites/worker.mjs');
+  bundleModule('compliance.mjs','compliance')+bundleModule('assessments.mjs','assessments')+read('sites/worker.mjs');
 rmSync(output,{recursive:true,force:true});
 mkdirSync(resolve(output,'server'),{recursive:true});
 mkdirSync(resolve(output,'.openai'),{recursive:true});

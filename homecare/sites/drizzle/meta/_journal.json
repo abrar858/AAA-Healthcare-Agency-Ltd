@@ -3,6 +3,7 @@
   "dialect": "sqlite",
   "entries": [
     {"idx": 0, "version": "6", "when": 1793865600000, "tag": "0000_aaa_workspace", "breakpoints": true},
-    {"idx": 1, "version": "6", "when": 1793865601000, "tag": "0001_aaa_staff_access", "breakpoints": true}
+    {"idx": 1, "version": "6", "when": 1793865601000, "tag": "0001_aaa_staff_access", "breakpoints": true},
+    {"idx": 2, "version": "6", "when": 1793865602000, "tag": "0002_aaa_team_leaders", "breakpoints": true}
   ]
 }

@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { complianceView, permittedCatalog, recordCompliance } from './compliance.mjs';
+import { assessmentView, changeAssessment, assessmentDocument } from './assessments.mjs';
 import { initialState, roles, applyAction, project, AppError, requireCondition } from './domain.mjs';
 
 const scrypt = promisify(scryptCallback);
@@ -31,7 +32,7 @@ db.exec(`
 `);
 db.prepare('INSERT OR IGNORE INTO workspace (id,body) VALUES (1,?)').run(JSON.stringify(initialState()));
 const readState = () => JSON.parse(db.prepare('SELECT body FROM workspace WHERE id=1').get().body);
-const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor)});
+const projectWorkspace = (state,actor) => ({...project(state,actor),compliance:complianceView(state,actor),assessment:assessmentView(state,actor)});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normalEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = email => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -162,6 +163,8 @@ function startServer() {
         }
         const entry = recordCompliance(state,actor,fields,file,requireCondition);
         if (file) db.prepare('INSERT INTO compliance_pdfs VALUES (?,?)').run(entry.id,file);
+      } else if (['add-assessment-template','archive-assessment-template','save-assessment'].includes(action)) {
+        changeAssessment(state,actor,action,id,fields,requireCondition);
       } else applyAction(state,actor,action,id,fields);
       db.prepare('UPDATE workspace SET body=? WHERE id=1').run(JSON.stringify(state));
       db.exec('COMMIT');
@@ -209,6 +212,14 @@ function startServer() {
         return write(res,200,html.replace('<script>',`<script nonce="${nonce}">`).replace('const live = null;',()=>`const live = ${state};`));
       }
       if (req.method === 'GET' && path === '/api/state') return json(res,200,projectWorkspace(readState(),actor));
+      const assessmentId=/^\/api\/assessment-document\/([a-f0-9-]{36})$/.exec(path)?.[1];
+      if (req.method === 'GET' && assessmentId) {
+        const record=assessmentView(readState(),actor)?.records.find(item=>item.id===assessmentId&&item.completedAt);
+        requireCondition(record,'Assessment not found.',404);
+        const preview=new URL(req.url,origin).searchParams.get('view')==='1';
+        res.setHeader('Content-Disposition',preview?'inline':'attachment; filename="aaa-assessment-'+record.id+'.html"');
+        return write(res,200,assessmentDocument(record,preview?nonce:''));
+      }
       const pdfId = /^\/api\/compliance-pdf\/([a-f0-9-]{36})$/.exec(path)?.[1];
       if (req.method === 'GET' && pdfId) {
         const entry = complianceView(readState(),actor).find(item=>item.id===pdfId && item.hasPdf);
@@ -222,7 +233,7 @@ function startServer() {
         if (compliance) requireCondition(['admin','manager','hr'].includes(actor.role),'You do not have access to compliance.',403);
         requireCondition((req.headers['content-type'] ?? '').split(';')[0] === 'application/json','Use JSON for this request.',415);
         let body;
-        try { body = JSON.parse(await readBody(req,compliance?7*1024*1024+12000:12000)); }
+        try { body = JSON.parse(await readBody(req,compliance?7*1024*1024+12000:128*1024)); }
         catch(error) { if (error instanceof AppError) throw error; throw new AppError(400,'Invalid JSON request.'); }
         requireCondition(body && typeof body.action === 'string' && typeof body.id === 'string' && body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields),'Invalid action request.');
         requireCondition((body.action === 'save-compliance') === compliance,'Invalid action endpoint.',400);

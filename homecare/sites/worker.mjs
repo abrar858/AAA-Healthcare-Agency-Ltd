@@ -7,9 +7,9 @@ function response(body,status=200,headers={}) {
   }});
 }
 function publicState(state,actor) {
-  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor)};
+  return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor),assessment:assessments.assessmentView(state,actor)};
 }
-const staffRoles=['manager','hr','rota','accounts','carer'];
+const staffRoles=['manager','team_leader','hr','rota','accounts','carer'];
 const denied='This account has no access to the workspace.';
 function memberOf(env,email) {
   return env.DB.prepare('SELECT email,label,role,branch,staff,identity_id,enabled,version FROM aaa_staff_access WHERE email=?').bind(email).first();
@@ -104,7 +104,7 @@ function parsePdf(value) {
 }
 async function update(request,env,{actor,membership},isCompliance) {
   domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
-  const body=await readJson(request,isCompliance?7*1024*1024+12000:12000);
+  const body=await readJson(request,isCompliance?7*1024*1024+12000:128*1024);
   domain.requireCondition(body && typeof body.action==='string' && typeof body.id==='string' && body.fields && typeof body.fields==='object' && !Array.isArray(body.fields),'Invalid action request.');
   const {action,id,fields}=body;
   domain.requireCondition((action==='save-compliance')===isCompliance,'Invalid action endpoint.');
@@ -113,6 +113,8 @@ async function update(request,env,{actor,membership},isCompliance) {
   if (isCompliance) {
     file=parsePdf(fields.pdf);
     entry=compliance.recordCompliance(state,actor,fields,file,domain.requireCondition);
+  } else if (['add-assessment-template','archive-assessment-template','save-assessment'].includes(action)) {
+    assessments.changeAssessment(state,actor,action,id,fields,domain.requireCondition);
   } else domain.applyAction(state,actor,action,id,fields);
   const snapshot=JSON.stringify(state);
   domain.requireCondition(new TextEncoder().encode(snapshot).length<=1024*1024,'Workspace has reached its current storage limit.',507);
@@ -152,6 +154,19 @@ export default {
         });
       }
       if (request.method==='GET' && path==='/api/state') return json(publicState((await workspace(env)).state,actor));
+      const assessmentId=/^\/api\/assessment-document\/([a-f0-9-]{36})$/.exec(path)?.[1];
+      if (request.method==='GET' && assessmentId) {
+        const {state}=await workspace(env);
+        const record=assessments.assessmentView(state,actor)?.records.find(item=>item.id===assessmentId&&item.completedAt);
+        domain.requireCondition(record,'Assessment not found.',404);
+        const preview=new URL(request.url).searchParams.get('view')==='1';
+        const nonce=preview?crypto.randomUUID().replaceAll('-',''):'';
+        return response(assessments.assessmentDocument(record,nonce),200,{
+          'Content-Type':'text/html; charset=utf-8',
+          'Content-Disposition':preview?'inline':'attachment; filename="aaa-assessment-'+record.id+'.html"',
+          'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"+(nonce?"; script-src 'nonce-"+nonce+"'":"")
+        });
+      }
       const pdfId=/^\/api\/compliance-pdf\/([a-f0-9-]{36})$/.exec(path)?.[1];
       if (request.method==='GET' && pdfId) {
         const {state}=await workspace(env);
