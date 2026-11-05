@@ -35,7 +35,7 @@ main{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);pa
 const live = null;
 
 const initialBranches = ['Preston', 'Blackpool', 'Blackburn'];
-const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance' };
+const pages = { overview:'Overview', rota:'Branch rota', staff:'Staff', clients:'Clients & patches', hr:'HR & onboarding', cover:'Cross-branch cover', mine:'My visits', branches:'Branch setup', accounts:'Hours review', clientCompliance:'Client compliance', carerCompliance:'Carer compliance', access:'Staff access' };
 const roles = {
   admin:{ label:'Head Office Admin', pages:['overview','rota','staff','clients','hr','cover','accounts','branches'] },
   manager:{ label:'Branch Manager', pages:['overview','rota','staff','clients','cover'] },
@@ -86,13 +86,14 @@ function load() {
 }
 let db = live?.db ?? load();
 let actor = live?.actor ?? actors()[0];
+let staffAccess = live?.access ?? null;
 let scope = actor.branch ?? 'All branches';
 const navigation = () => {
   const registerPages = live ? [
     ...(live.catalog.client.length ? ['clientCompliance'] : []),
     ...(live.catalog.carer.length ? ['carerCompliance'] : [])
   ] : [];
-  return [...registerPages,...roles[actor.role].pages];
+  return [...registerPages,...(staffAccess?['access']:[]),...roles[actor.role].pages];
 };
 let page = navigation()[0];
 let saveAction;
@@ -352,6 +353,52 @@ $('#view').addEventListener('submit',event=>{
   render();
 });
 
+
+const hostedRoles = ['manager','hr','rota','accounts','carer'];
+function accessPage() {
+  return hero('Staff access','Assign app access by email, role and branch.')+
+    panel('Rollout steps','The private site has a separate invitation list.',
+      '<div class="empty"><ol style="margin:0;padding-left:20px"><li>Create the branch in Branch setup. For carers, create their staff record in HR first.</li><li>Use Add access below with the email the person uses to sign in with ChatGPT.</li><li>Invite the same email through the site’s sharing settings as a viewer.</li></ol></div>')+
+    panel('Staff access register','An enabled entry allows the assigned role after the person has been invited to the private site.',
+      table(['Staff member','Sign-in email','Role','Branch','App access','Actions'],staffAccess.filter(entry=>inScope(entry.branch)).map(entry=>[
+        h(entry.label),h(entry.email),h(roles[entry.role]?.label),h(entry.branch),
+        badge(entry.enabled?'Enabled':'Revoked',entry.enabled?'ok':'bad'),
+        actions(button(entry.enabled?'Edit':'Restore','save-access',entry.email),entry.enabled&&button('Revoke','revoke-access',entry.email,'small danger'))
+      ]),'No staff access entries yet.'),button('Add access','save-access','','primary'));
+}
+const hiddenField = (name,value)=>'<input type="hidden" name="'+name+'" value="'+h(value)+'">';
+function accessEditor(email) {
+  ensure(staffAccess && db.branches.length,'Create a branch before assigning access.');
+  const entry=staffAccess.find(item=>item.email===email);
+  ensure(!email || entry,'This access entry is unavailable.');
+  showEditor(entry?(entry.enabled?'Edit staff access':'Restore staff access'):'Add staff access',
+    hiddenField('version',entry?.version??0)+field('Sign-in email','email','type="email" maxlength="254" required'+(entry?' readonly':''),entry?.email)+
+    field('Display name','label','maxlength="100" required',entry?.label)+
+    select('Role','role',hostedRoles.map(role=>[role,roles[role].label]))+
+    select('Branch','branch',db.branches.map(branch=>[branch,branch]))+
+    '<div id="carer-link"></div><small class="muted">Use the same email in the private site’s sharing settings.</small>',()=>{});
+  const form=$('#editor-fields');
+  const role=form.querySelector('[name="role"]'), branch=form.querySelector('[name="branch"]');
+  role.value=entry?.role??'manager';
+  branch.value=entry?.branch??(db.branches.includes(scope)?scope:db.branches[0]);
+  const refreshCarer=()=>{
+    const link=form.querySelector('#carer-link');
+    link.innerHTML=role.value==='carer'?select('Staff record','staff',[['','Choose a staff record'],
+      ...db.staff.filter(person=>person.branch===branch.value).map(person=>[person.id,person.name])]):'';
+    if (role.value==='carer' && branch.value===entry?.branch && entry.staff) link.querySelector('[name="staff"]').value=entry.staff;
+  };
+  role.addEventListener('change',refreshCarer);
+  branch.addEventListener('change',refreshCarer);
+  refreshCarer();
+}
+function revokeEditor(email) {
+  const entry=staffAccess?.find(item=>item.email===email&&item.enabled);
+  ensure(entry,'This access entry is unavailable.');
+  showEditor('Revoke access for '+entry.label,
+    hiddenField('email',entry.email)+hiddenField('version',entry.version)+
+    '<p>They will lose access to the tracker. Remove their site invitation separately if needed.</p>',()=>{},'Revoke access');
+}
+
 function render() {
   if (!live) {
     $('#role').innerHTML = opts(actors().map(person=>[person.id,actorLabel(person)]));
@@ -363,7 +410,7 @@ function render() {
   $('#nav').innerHTML = navigation().map(name=>'<button type="button" data-page="'+name+'"'+(page===name?' aria-current="page"':'')+'>'+pages[name]+'</button>').join('');
   $('#view').innerHTML = {
     overview,rota:rotaPage,staff:staffPage,clients:clientsPage,hr:()=>staffPage(true),cover:coverPage,mine:carerPage,branches:branchPage,accounts:accountsPage,
-    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer')
+    clientCompliance:()=>compliancePage('client'),carerCompliance:()=>compliancePage('carer'),access:accessPage
   }[page]();
 }
 
@@ -520,12 +567,14 @@ async function sendAction(action, id, fields = {}) {
   saving = true;
   $('#editor-submit').disabled = true;
   try {
-    const response = await fetch(action==='save-compliance'?'/api/compliance':'/api/action',{method:'POST',headers:{'Content-Type':'application/json'},
+    const accessAction = ['save-access','revoke-access'].includes(action);
+    const endpoint = accessAction?'/api/access':action==='save-compliance'?'/api/compliance':'/api/action';
+    const response = await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({action,id,fields})});
-    if (response.status===401) {location.assign('/login');return false;}
+    if (response.status===401) {location.assign(live?.site?'/signin-with-chatgpt?return_to=%2F':'/login');return false;}
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
-    db = result;
+    if (accessAction) staffAccess = result; else db = result;
     render();
     notice('Change saved.');
     return true;
@@ -563,6 +612,7 @@ $('#view').addEventListener('click',async event=>{
   const visit=visitById(id);
   try {
     const handlers={
+      'save-access':()=>accessEditor(id), 'revoke-access':()=>revokeEditor(id),
       'add-staff':()=>staffEditor(), 'edit-staff':()=>staffEditor(staffById(id)),
       'save-compliance':()=>complianceEditor(id), 'compliance-history':()=>complianceHistory(id),
       'add-branch':branchEditor,'add-patch':patchEditor,'add-client':clientEditor,'add-visit':visitEditor,
@@ -580,7 +630,7 @@ if (live) {
   $('label[for="role"]').style.display = 'none';
   $('#reset').hidden = true;
   $('#logout').hidden = false;
-  $('#mode-label').textContent = actor.label+' · '+roles[actor.role].label;
+  $('#mode-label').textContent = actor.label===roles[actor.role].label ? actor.label : actor.label+' · '+roles[actor.role].label;
   $('#mode-note').textContent = 'AAA Homecare workspace';
 }
 render();

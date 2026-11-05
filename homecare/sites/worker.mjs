@@ -9,12 +9,65 @@ function response(body,status=200,headers={}) {
 function publicState(state,actor) {
   return {...domain.project(state,actor),compliance:compliance.complianceView(state,actor)};
 }
-function authenticate(request,env) {
+const staffRoles=['manager','hr','rota','accounts','carer'];
+const denied='This account has no access to the workspace.';
+function memberOf(env,email) {
+  return env.DB.prepare('SELECT email,label,role,branch,staff,identity_id,enabled,version FROM aaa_staff_access WHERE email=?').bind(email).first();
+}
+async function authenticate(request,env) {
   const id=request.headers.get('oai-authenticated-user-id');
   const email=request.headers.get('oai-authenticated-user-email')?.trim().toLowerCase();
   domain.requireCondition(id && email,'Sign in to continue.',401);
-  domain.requireCondition(env.AAA_OWNER_EMAIL && email===env.AAA_OWNER_EMAIL,'This account has no access to the workspace.',403);
-  return {label:'Head Office Admin',role:'admin',branch:null,staff:null};
+  domain.requireCondition(env.AAA_OWNER_EMAIL,'Workspace sign-in is unavailable.',503);
+  if (email===env.AAA_OWNER_EMAIL) return {actor:{label:'Head Office Admin',role:'admin',branch:null,staff:null}};
+  let member=await memberOf(env,email);
+  domain.requireCondition(member?.enabled && (!member.identity_id || member.identity_id===id),denied,403);
+  if (!member.identity_id) {
+    await env.DB.prepare('UPDATE OR IGNORE aaa_staff_access SET identity_id=? WHERE email=? AND enabled=1 AND identity_id IS NULL').bind(id,email).run();
+    member=await memberOf(env,email);
+  }
+  domain.requireCondition(member?.enabled && member.identity_id===id,denied,403);
+  const {label,role,branch,staff,version}=member;
+  return {actor:{label,role,branch,staff},membership:{email,id,version}};
+}
+async function staffAccess(env) {
+  const list=await env.DB.prepare('SELECT email,label,role,branch,staff,enabled,version,updated_at FROM aaa_staff_access ORDER BY enabled DESC, label COLLATE NOCASE, email').all();
+  return list.results;
+}
+async function changeAccess(request,env) {
+  domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
+  const body=await readJson(request,12000);
+  const fields=body?.fields;
+  const email=typeof fields?.email==='string'?fields.email.trim().toLowerCase():'';
+  domain.requireCondition(email.length<=254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),'Enter a valid sign-in email.');
+  domain.requireCondition(email!==env.AAA_OWNER_EMAIL,'The site owner’s access is managed separately.');
+  const version=Number(fields.version), at=new Date().toISOString();
+  domain.requireCondition(Number.isSafeInteger(version) && version>=0,'Invalid access version.');
+  let result;
+  if (body.action==='revoke-access') {
+    result=await env.DB.prepare('UPDATE aaa_staff_access SET enabled=0,version=version+1,updated_at=? WHERE email=? AND version=? AND enabled=1').bind(at,email,version).run();
+  } else {
+    domain.requireCondition(body.action==='save-access','Invalid access action.');
+    const label=typeof fields.label==='string'?fields.label.trim():'';
+    const {role,branch}=fields;
+    const {state}=await workspace(env);
+    domain.requireCondition(label && label.length<=100 && staffRoles.includes(role) && state.branches.includes(branch),'Enter a name, role and existing branch.');
+    const staff=role==='carer'?fields.staff:null;
+    domain.requireCondition(role!=='carer' || state.staff.some(person=>person.id===staff && person.branch===branch),'Link a carer to their staff record in the selected branch.');
+    if(staff) {
+      const existing=await env.DB.prepare('SELECT email FROM aaa_staff_access WHERE staff=? AND enabled=1 AND email<>?').bind(staff,email).first();
+      domain.requireCondition(!existing,'This carer already has an active login.',409);
+    }
+    if(version===0) {
+      result=await env.DB.prepare('INSERT OR IGNORE INTO aaa_staff_access (email,label,role,branch,staff,updated_at) VALUES (?,?,?,?,?,?)')
+        .bind(email,label,role,branch,staff,at).run();
+    } else {
+      result=await env.DB.prepare('UPDATE OR IGNORE aaa_staff_access SET label=?,role=?,branch=?,staff=?,enabled=1,version=version+1,updated_at=? WHERE email=? AND version=?')
+        .bind(label,role,branch,staff,at,email,version).run();
+    }
+  }
+  domain.requireCondition(result.meta.changes===1,'This access entry changed. Refresh the page and try again.',409);
+  return json(await staffAccess(env));
 }
 async function workspace(env) {
   const row=await env.DB.prepare('SELECT body, rev FROM aaa_workspace WHERE id=1').first();
@@ -49,7 +102,7 @@ function parsePdf(value) {
   domain.requireCondition(binary.length<=5*1024*1024 && binary.startsWith('%PDF-'),'Upload a PDF of up to 5 MB.');
   return Uint8Array.from(binary,char=>char.charCodeAt(0));
 }
-async function update(request,env,actor,isCompliance) {
+async function update(request,env,{actor,membership},isCompliance) {
   domain.requireCondition(request.headers.get('content-type')?.split(';')[0]==='application/json','Use JSON for this request.',415);
   const body=await readJson(request,isCompliance?7*1024*1024+12000:12000);
   domain.requireCondition(body && typeof body.action==='string' && typeof body.id==='string' && body.fields && typeof body.fields==='object' && !Array.isArray(body.fields),'Invalid action request.');
@@ -64,7 +117,11 @@ async function update(request,env,actor,isCompliance) {
   const snapshot=JSON.stringify(state);
   domain.requireCondition(new TextEncoder().encode(snapshot).length<=1024*1024,'Workspace has reached its current storage limit.',507);
   if (file) await env.BUCKET.put('compliance/'+entry.id,file);
-  const result=await env.DB.prepare('UPDATE aaa_workspace SET body=?, rev=rev+1 WHERE id=1 AND rev=?').bind(snapshot,rev).run();
+  const writeSql='UPDATE aaa_workspace SET body=?, rev=rev+1 WHERE id=1 AND rev=?';
+  const result=membership
+    ? await env.DB.prepare(writeSql+' AND EXISTS (SELECT 1 FROM aaa_staff_access WHERE email=? AND identity_id=? AND version=? AND enabled=1)')
+      .bind(snapshot,rev,membership.email,membership.id,membership.version).run()
+    : await env.DB.prepare(writeSql).bind(snapshot,rev).run();
   if (result.meta.changes!==1) {
     if (file) await env.BUCKET.delete('compliance/'+entry.id);
     throw new domain.AppError(409,'Another update was saved. Refresh the page and try again.');
@@ -76,12 +133,18 @@ export default {
   async fetch(request,env) {
     const path=new URL(request.url).pathname;
     try {
-      const actor=authenticate(request,env);
+      const auth=await authenticate(request,env);
+      const {actor}=auth;
       if (request.method==='POST') domain.requireCondition(env.AAA_ORIGIN && request.headers.get('Origin')===env.AAA_ORIGIN,'Invalid request origin.',403);
       if (request.method==='POST' && path==='/logout') return response(null,303,{Location:'/signout-with-chatgpt?return_to=%2F'});
+      if (path==='/api/access') {
+        domain.requireCondition(!auth.membership,'Only the site owner can manage access.',403);
+        if (request.method==='GET') return json(await staffAccess(env));
+        if (request.method==='POST') return await changeAccess(request,env);
+      }
       if (request.method==='GET' && path==='/') {
         const {state}=await workspace(env);
-        const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor)}).replaceAll('<','\\u003c');
+        const app=JSON.stringify({actor,db:publicState(state,actor),catalog:compliance.permittedCatalog(actor),site:true,access:auth.membership?null:await staffAccess(env)}).replaceAll('<','\\u003c');
         const nonce=crypto.randomUUID().replaceAll('-','');
         return response(html.replace('<script>','<script nonce="'+nonce+'">').replace('const live = null;',()=> 'const live = '+app+';'),200,{
           'Content-Type':'text/html; charset=utf-8',
@@ -97,7 +160,7 @@ export default {
         domain.requireCondition(file,'Document not found.',404);
         return response(file.body,200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="compliance-evidence.pdf"'});
       }
-      if (request.method==='POST' && ['/api/action','/api/compliance'].includes(path)) return await update(request,env,actor,path==='/api/compliance');
+      if (request.method==='POST' && ['/api/action','/api/compliance'].includes(path)) return await update(request,env,auth,path==='/api/compliance');
       return json({error:'Page not found.'},404);
     } catch(error) {
       if (error.status===401 && path==='/') return response(null,303,{Location:'/signin-with-chatgpt?return_to=%2F'});
